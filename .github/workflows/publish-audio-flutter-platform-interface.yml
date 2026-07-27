@@ -1,0 +1,26 @@
+name: Publish audio_flutter_platform_interface
+
+on:
+  push:
+    tags:
+      - 'audio_flutter_platform_interface-v[0-9]+.[0-9]+.[0-9]+'
+      - 'audio_flutter_platform_interface-v[0-9]+.[0-9]+.[0-9]+-*'
+
+permissions: {}
+
+jobs:
+  preflight:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-check.yml
+    with:
+      package: audio_flutter_platform_interface
+      working-directory: packages/audio_flutter_platform_interface
+  publish:
+    needs: preflight
+    permissions:
+      id-token: write
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
+    with:
+      working-directory: packages/audio_flutter_platform_interface
+      environment: pub.dev

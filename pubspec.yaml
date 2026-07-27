@@ -1,0 +1,20 @@
+name: audio_kit_workspace
+publish_to: none
+
+environment:
+  sdk: ^3.12.0
+
+workspace:
+  - packages/audio_core
+  - packages/audio_kit_graph
+  - packages/audio_processing
+  - packages/speech_core
+  - packages/audio_flutter_platform_interface
+  - packages/audio_flutter
+  - packages/audio_flutter_darwin
+  - packages/voice_core
+  - packages/voice_flutter
+  - packages/speech_fluidaudio
+  - packages/speech_mlx
+  - packages/speech_deepgram
+  - packages/speech_openai_tts

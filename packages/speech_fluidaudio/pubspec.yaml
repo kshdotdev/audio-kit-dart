@@ -1,0 +1,32 @@
+name: speech_fluidaudio
+description: FluidAudio implementation of the provider-neutral speech contracts.
+version: 0.1.0
+resolution: workspace
+homepage: https://github.com/kshdotdev/audio-kit-dart
+repository: https://github.com/kshdotdev/audio-kit-dart
+issue_tracker: https://github.com/kshdotdev/audio-kit-dart/issues
+topics:
+  - speech-to-text
+  - text-to-speech
+  - vad
+  - fluidaudio
+platforms:
+  ios:
+  macos:
+
+environment:
+  sdk: ^3.12.0
+  flutter: ">=3.44.0"
+
+dependencies:
+  audio_core: ^0.1.0
+  audio_processing: ^0.1.0
+  fluidaudio_dart: ^0.3.1
+  flutter:
+    sdk: flutter
+  speech_core: ^0.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0

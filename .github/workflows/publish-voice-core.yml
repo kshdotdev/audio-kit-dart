@@ -1,0 +1,26 @@
+name: Publish voice_core
+
+on:
+  push:
+    tags:
+      - 'voice_core-v[0-9]+.[0-9]+.[0-9]+'
+      - 'voice_core-v[0-9]+.[0-9]+.[0-9]+-*'
+
+permissions: {}
+
+jobs:
+  preflight:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-check.yml
+    with:
+      package: voice_core
+      working-directory: packages/voice_core
+  publish:
+    needs: preflight
+    permissions:
+      id-token: write
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
+    with:
+      working-directory: packages/voice_core
+      environment: pub.dev

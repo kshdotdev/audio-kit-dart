@@ -1,0 +1,488 @@
+import 'dart:async';
+import 'dart:typed_data';
+
+import 'package:fluidaudio_dart/fluidaudio_dart.dart' as native;
+
+import 'drivers.dart';
+import 'options.dart';
+
+/// Production runtime backed by the `fluidaudio_dart` Flutter plugin.
+///
+/// SDK values are translated at this boundary and never enter `speech_core`.
+final class FluidNativeRuntime implements FluidAudioRuntime {
+  final Set<_NativeDriver> _drivers = <_NativeDriver>{};
+  Future<void>? _closeFuture;
+
+  bool get _isClosed => _closeFuture != null;
+
+  @override
+  Future<FluidBatchAsrDriver> createBatchAsr(
+    FluidRecognitionModel model,
+  ) async {
+    _ensureOpen();
+    final recognizer = await native.FluidAsr.load(version: _asrVersion(model));
+    if (_isClosed) {
+      await recognizer.dispose();
+      throw StateError('FluidAudio runtime is closed.');
+    }
+    return _register<_NativeBatchAsrDriver>(_NativeBatchAsrDriver(recognizer));
+  }
+
+  @override
+  Future<FluidDiarizationDriver> createDiarizer(
+    FluidDiarizationDriverConfiguration configuration,
+  ) async {
+    _ensureOpen();
+    final diarizer = await native.FluidDiarizer.create(
+      clusteringThreshold: configuration.clusteringThreshold,
+      numSpeakers: configuration.exactSpeakerCount,
+      minSpeakers: configuration.minimumSpeakers,
+      maxSpeakers: configuration.maximumSpeakers,
+    );
+    if (_isClosed) {
+      await diarizer.dispose();
+      throw StateError('FluidAudio runtime is closed.');
+    }
+    return _register<_NativeDiarizationDriver>(
+      _NativeDiarizationDriver(diarizer),
+    );
+  }
+
+  @override
+  Future<FluidEndOfUtteranceDriver> createEndOfUtterance({
+    required FluidEndOfUtteranceChunk chunk,
+    required Duration debounce,
+  }) async {
+    _ensureOpen();
+    final detector = await native.FluidEou.create(
+      chunkSize: switch (chunk) {
+        FluidEndOfUtteranceChunk.milliseconds160 => native.EouChunkSize.ms160,
+        FluidEndOfUtteranceChunk.milliseconds320 => native.EouChunkSize.ms320,
+        FluidEndOfUtteranceChunk.milliseconds1280 => native.EouChunkSize.ms1280,
+      },
+      eouDebounceMs: debounce.inMilliseconds,
+    );
+    if (_isClosed) {
+      await detector.dispose();
+      throw StateError('FluidAudio runtime is closed.');
+    }
+    return _register<_NativeEndOfUtteranceDriver>(
+      _NativeEndOfUtteranceDriver(detector),
+    );
+  }
+
+  @override
+  Future<FluidStreamingAsrDriver> createStreamingAsr(
+    FluidStreamingAsrDriverConfiguration configuration,
+  ) async {
+    _ensureOpen();
+    native.FluidStreamingAsr? recognizer;
+    native.FluidCtcVocabulary? vocabulary;
+    try {
+      recognizer = await native.FluidStreamingAsr.create(
+        version: _asrVersion(configuration.model),
+        config: native.FluidStreamingConfig(
+          chunkSeconds: configuration.chunkSeconds,
+          hypothesisChunkSeconds: configuration.hypothesisChunkSeconds,
+          leftContextSeconds: configuration.leftContextSeconds,
+          rightContextSeconds: configuration.rightContextSeconds,
+          minContextForConfirmation:
+              configuration.minimumContextForConfirmation,
+          confirmationThreshold: configuration.confirmationThreshold,
+        ),
+      );
+      if (configuration.vocabulary.isNotEmpty) {
+        vocabulary = await native.FluidCtcVocabulary.load(
+          terms: <native.FluidVocabularyTerm>[
+            for (final term in configuration.vocabulary)
+              native.FluidVocabularyTerm(
+                term.text,
+                weight: term.weight,
+                aliases: term.aliases.isEmpty ? null : term.aliases,
+              ),
+          ],
+          minSimilarity: configuration.vocabularyMinimumSimilarity,
+        );
+        await recognizer.configureVocabulary(vocabulary);
+      }
+      if (_isClosed) {
+        await vocabulary?.dispose();
+        await recognizer.dispose();
+        throw StateError('FluidAudio runtime is closed.');
+      }
+      return _register<_NativeStreamingAsrDriver>(
+        _NativeStreamingAsrDriver(recognizer, vocabulary, configuration.source),
+      );
+    } catch (_) {
+      await vocabulary?.dispose();
+      await recognizer?.dispose();
+      rethrow;
+    }
+  }
+
+  @override
+  Future<FluidTtsDriver> createTts(
+    FluidTtsDriverConfiguration configuration,
+  ) async {
+    _ensureOpen();
+    final _NativeTtsDriver driver;
+    switch (configuration.engine) {
+      case FluidSynthesisEngine.pocket:
+        final synthesizer = await native.FluidPocketTts.create();
+        driver = _NativePocketTtsDriver(synthesizer, configuration.temperature);
+      case FluidSynthesisEngine.kokoroEnglish:
+      case FluidSynthesisEngine.kokoroMandarin:
+      case FluidSynthesisEngine.kokoroJapanese:
+        final synthesizer = await native.FluidKokoroTts.create(
+          variant: switch (configuration.engine) {
+            FluidSynthesisEngine.kokoroEnglish => native.KokoroVariant.english,
+            FluidSynthesisEngine.kokoroMandarin =>
+              native.KokoroVariant.mandarin,
+            FluidSynthesisEngine.kokoroJapanese =>
+              native.KokoroVariant.japanese,
+            FluidSynthesisEngine.pocket => throw StateError(
+              'PocketTTS does not have a Kokoro model variant.',
+            ),
+          },
+        );
+        driver = _NativeKokoroTtsDriver(synthesizer);
+    }
+    if (_isClosed) {
+      await driver.close();
+      throw StateError('FluidAudio runtime is closed.');
+    }
+    return _register<_NativeTtsDriver>(driver);
+  }
+
+  @override
+  Future<FluidVadDriver> createVad({
+    required double threshold,
+    required Duration minimumSilence,
+  }) async {
+    _ensureOpen();
+    native.FluidVad? detector;
+    native.FluidVadStream? stream;
+    try {
+      detector = await native.FluidVad.create(threshold: threshold);
+      stream = await detector.stream(
+        minSilenceDuration:
+            minimumSilence.inMicroseconds / Duration.microsecondsPerSecond,
+      );
+      if (_isClosed) {
+        await stream.dispose();
+        await detector.dispose();
+        throw StateError('FluidAudio runtime is closed.');
+      }
+      return _register<_NativeVadDriver>(_NativeVadDriver(detector, stream));
+    } catch (_) {
+      await stream?.dispose();
+      await detector?.dispose();
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> close() => _closeFuture ??= _close();
+
+  Future<void> _close() async {
+    final drivers = List<_NativeDriver>.of(_drivers);
+    await Future.wait<void>(<Future<void>>[
+      for (final driver in drivers) driver.close(),
+    ]);
+    _drivers.clear();
+  }
+
+  T _register<T extends _NativeDriver>(T driver) {
+    driver.onClosed = () {
+      _drivers.remove(driver);
+    };
+    _drivers.add(driver);
+    return driver;
+  }
+
+  void _ensureOpen() {
+    if (_isClosed) {
+      throw StateError('FluidAudio runtime is closed.');
+    }
+  }
+}
+
+native.AsrVersion _asrVersion(FluidRecognitionModel model) => switch (model) {
+  FluidRecognitionModel.parakeetV2 => native.AsrVersion.v2,
+  FluidRecognitionModel.parakeetV3 => native.AsrVersion.v3,
+};
+
+abstract base class _NativeDriver {
+  Future<void>? _closeFuture;
+  void Function()? onClosed;
+
+  Future<void> close() => _closeFuture ??= _closeOnce();
+
+  Future<void> _closeOnce() async {
+    try {
+      await closeNative();
+    } finally {
+      onClosed?.call();
+    }
+  }
+
+  Future<void> closeNative();
+}
+
+final class _NativeStreamingAsrDriver extends _NativeDriver
+    implements FluidStreamingAsrDriver {
+  _NativeStreamingAsrDriver(this._recognizer, this._vocabulary, this._source);
+
+  final native.FluidStreamingAsr _recognizer;
+  final native.FluidCtcVocabulary? _vocabulary;
+  final FluidRecognitionSource _source;
+
+  @override
+  Stream<FluidDriverTranscriptionUpdate> get updates => _recognizer.updates.map(
+    (update) => FluidDriverTranscriptionUpdate(
+      text: update.text,
+      promotesPreviousHypothesis: update.isConfirmed,
+      confidence: update.confidence,
+      timings: <FluidDriverTokenTiming>[
+        for (final timing
+            in update.tokenTimings ?? const <native.FluidTokenTiming>[])
+          FluidDriverTokenTiming(
+            text: timing.token,
+            start: timing.start,
+            end: timing.end,
+            confidence: timing.confidence,
+          ),
+      ],
+    ),
+  );
+
+  @override
+  Future<void> feed(Float32List samples) => _recognizer.feed(samples);
+
+  @override
+  Future<String> finish() => _recognizer.finish();
+
+  @override
+  Future<void> start() => _recognizer.start(
+    source: switch (_source) {
+      FluidRecognitionSource.microphone => native.FluidAudioSource.microphone,
+      FluidRecognitionSource.systemAudio => native.FluidAudioSource.system,
+    },
+  );
+
+  @override
+  Future<void> closeNative() async {
+    try {
+      await _recognizer.dispose();
+    } finally {
+      await _vocabulary?.dispose();
+    }
+  }
+}
+
+final class _NativeBatchAsrDriver extends _NativeDriver
+    implements FluidBatchAsrDriver {
+  _NativeBatchAsrDriver(this._recognizer);
+
+  final native.FluidAsr _recognizer;
+
+  @override
+  Future<FluidDriverBatchAsrResult> transcribe(
+    Float32List samples, {
+    String? language,
+  }) async {
+    final result = await _recognizer.transcribe(samples, language: language);
+    return FluidDriverBatchAsrResult(
+      text: result.text,
+      confidence: result.confidence,
+      duration: result.duration,
+      timings: <FluidDriverTokenTiming>[
+        for (final timing
+            in result.tokenTimings ?? const <native.FluidTokenTiming>[])
+          FluidDriverTokenTiming(
+            text: timing.token,
+            start: timing.start,
+            end: timing.end,
+            confidence: timing.confidence,
+          ),
+      ],
+    );
+  }
+
+  @override
+  Future<void> closeNative() => _recognizer.dispose();
+}
+
+final class _NativeVadDriver extends _NativeDriver implements FluidVadDriver {
+  _NativeVadDriver(this._detector, this._stream);
+
+  final native.FluidVad _detector;
+  final native.FluidVadStream _stream;
+
+  @override
+  Stream<FluidDriverVadEvent> get events => _stream.events.map(
+    (event) => FluidDriverVadEvent(
+      probability: event.probability,
+      sampleIndex: event.sampleIndex,
+      time: event.time,
+    ),
+  );
+
+  @override
+  Future<void> feed(Float32List samples) => _stream.feed(samples);
+
+  @override
+  Future<void> closeNative() async {
+    try {
+      await _stream.dispose();
+    } finally {
+      await _detector.dispose();
+    }
+  }
+}
+
+final class _NativeEndOfUtteranceDriver extends _NativeDriver
+    implements FluidEndOfUtteranceDriver {
+  _NativeEndOfUtteranceDriver(this._detector);
+
+  final native.FluidEou _detector;
+
+  @override
+  Stream<FluidDriverEndOfUtteranceUpdate> get updates =>
+      StreamGroup.merge(<Stream<FluidDriverEndOfUtteranceUpdate>>[
+        _detector.partials.map(
+          (text) => FluidDriverEndOfUtteranceUpdate(text: text, isFinal: false),
+        ),
+        _detector.utterances.map(
+          (text) => FluidDriverEndOfUtteranceUpdate(text: text, isFinal: true),
+        ),
+      ]);
+
+  @override
+  Future<void> feed(Float32List samples) => _detector.feed(samples);
+
+  @override
+  Future<String> finish() => _detector.finish();
+
+  @override
+  Future<void> closeNative() => _detector.dispose();
+}
+
+final class _NativeDiarizationDriver extends _NativeDriver
+    implements FluidDiarizationDriver {
+  _NativeDiarizationDriver(this._diarizer);
+
+  final native.FluidDiarizer _diarizer;
+
+  @override
+  Future<List<FluidDriverSpeakerSegment>> diarize(Float32List samples) async {
+    final result = await _diarizer.diarize(samples);
+    return <FluidDriverSpeakerSegment>[
+      for (final segment in result.segments)
+        FluidDriverSpeakerSegment(
+          speakerId: segment.speakerId,
+          start: segment.start,
+          end: segment.end,
+          confidence: segment.qualityScore,
+        ),
+    ];
+  }
+
+  @override
+  Future<void> closeNative() => _diarizer.dispose();
+}
+
+abstract base class _NativeTtsDriver extends _NativeDriver
+    implements FluidTtsDriver {}
+
+final class _NativePocketTtsDriver extends _NativeTtsDriver {
+  _NativePocketTtsDriver(this._synthesizer, this._temperature);
+
+  final native.FluidPocketTts _synthesizer;
+  final double _temperature;
+
+  @override
+  Stream<FluidDriverTtsChunk> synthesize({
+    required String text,
+    required String? voice,
+    required double rate,
+  }) => _synthesizer
+      .synthesizeStreaming(text, voice: voice, temperature: _temperature)
+      .map(
+        (chunk) => FluidDriverTtsChunk(
+          samples: Float32List.fromList(chunk.samples),
+          frameIndex: chunk.frameIndex,
+        ),
+      );
+
+  @override
+  Future<void> closeNative() => _synthesizer.dispose();
+}
+
+final class _NativeKokoroTtsDriver extends _NativeTtsDriver {
+  _NativeKokoroTtsDriver(this._synthesizer);
+
+  final native.FluidKokoroTts _synthesizer;
+
+  @override
+  Stream<FluidDriverTtsChunk> synthesize({
+    required String text,
+    required String? voice,
+    required double rate,
+  }) async* {
+    final result = await _synthesizer.synthesizeDetailed(
+      text,
+      voice: voice,
+      speed: rate,
+    );
+    yield FluidDriverTtsChunk(
+      samples: Float32List.fromList(result.samples),
+      frameIndex: 0,
+    );
+  }
+
+  @override
+  Future<void> closeNative() => _synthesizer.dispose();
+}
+
+/// Minimal stream merge that avoids coupling the adapter to an Rx package.
+final class StreamGroup<T> {
+  StreamGroup._();
+
+  static Stream<T> merge<T>(Iterable<Stream<T>> streams) {
+    late StreamController<T> controller;
+    final subscriptions = <StreamSubscription<T>>[];
+    var remaining = 0;
+
+    controller = StreamController<T>.broadcast(
+      onListen: () {
+        final values = streams.toList(growable: false);
+        remaining = values.length;
+        if (remaining == 0) {
+          unawaited(controller.close());
+          return;
+        }
+        for (final stream in values) {
+          subscriptions.add(
+            stream.listen(
+              controller.add,
+              onError: controller.addError,
+              onDone: () {
+                remaining -= 1;
+                if (remaining == 0) {
+                  unawaited(controller.close());
+                }
+              },
+            ),
+          );
+        }
+      },
+      onCancel: () async {
+        await Future.wait<void>(<Future<void>>[
+          for (final subscription in subscriptions) subscription.cancel(),
+        ]);
+      },
+    );
+    return controller.stream;
+  }
+}

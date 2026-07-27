@@ -1,0 +1,26 @@
+name: Publish audio_core
+
+on:
+  push:
+    tags:
+      - 'audio_core-v[0-9]+.[0-9]+.[0-9]+'
+      - 'audio_core-v[0-9]+.[0-9]+.[0-9]+-*'
+
+permissions: {}
+
+jobs:
+  preflight:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-check.yml
+    with:
+      package: audio_core
+      working-directory: packages/audio_core
+  publish:
+    needs: preflight
+    permissions:
+      id-token: write
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
+    with:
+      working-directory: packages/audio_core
+      environment: pub.dev

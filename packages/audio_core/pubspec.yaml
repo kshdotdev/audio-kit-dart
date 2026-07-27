@@ -1,0 +1,18 @@
+name: audio_core
+description: Provider-neutral PCM audio types and asynchronous session contracts.
+version: 0.1.0
+resolution: workspace
+homepage: https://github.com/kshdotdev/audio-kit-dart
+repository: https://github.com/kshdotdev/audio-kit-dart
+issue_tracker: https://github.com/kshdotdev/audio-kit-dart/issues
+topics:
+  - audio
+  - pcm
+  - streaming
+  - dart
+
+environment:
+  sdk: ^3.12.0
+
+dev_dependencies:
+  test: ^1.26.3

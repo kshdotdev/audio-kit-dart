@@ -1,0 +1,26 @@
+name: Publish speech_fluidaudio
+
+on:
+  push:
+    tags:
+      - 'speech_fluidaudio-v[0-9]+.[0-9]+.[0-9]+'
+      - 'speech_fluidaudio-v[0-9]+.[0-9]+.[0-9]+-*'
+
+permissions: {}
+
+jobs:
+  preflight:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-check.yml
+    with:
+      package: speech_fluidaudio
+      working-directory: packages/speech_fluidaudio
+  publish:
+    needs: preflight
+    permissions:
+      id-token: write
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
+    with:
+      working-directory: packages/speech_fluidaudio
+      environment: pub.dev

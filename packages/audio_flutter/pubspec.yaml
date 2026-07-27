@@ -1,0 +1,39 @@
+name: audio_flutter
+description: Provider-neutral Flutter microphone, system-audio, and PCM playback.
+version: 0.1.0
+resolution: workspace
+homepage: https://github.com/kshdotdev/audio-kit-dart
+repository: https://github.com/kshdotdev/audio-kit-dart
+issue_tracker: https://github.com/kshdotdev/audio-kit-dart/issues
+topics:
+  - audio
+  - flutter
+  - recording
+  - playback
+platforms:
+  ios:
+  macos:
+
+environment:
+  sdk: ^3.12.0
+  flutter: ">=3.44.0"
+
+dependencies:
+  audio_core: ^0.1.0
+  audio_flutter_darwin: ^0.1.0
+  audio_flutter_platform_interface: ^0.1.0
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  plugin:
+    platforms:
+      ios:
+        default_package: audio_flutter_darwin
+      macos:
+        default_package: audio_flutter_darwin

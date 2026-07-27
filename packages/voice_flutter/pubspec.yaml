@@ -1,0 +1,27 @@
+name: voice_flutter
+description: Graph-backed Flutter audio bridges and provider-neutral voice widgets.
+version: 0.1.0
+resolution: workspace
+homepage: https://github.com/kshdotdev/audio-kit-dart
+repository: https://github.com/kshdotdev/audio-kit-dart
+issue_tracker: https://github.com/kshdotdev/audio-kit-dart/issues
+topics:
+  - voice
+  - flutter
+  - speech-to-text
+  - text-to-speech
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  audio_core: ^0.1.0
+  audio_kit_graph: ^0.1.0
+  flutter:
+    sdk: flutter
+  speech_core: ^0.1.0
+  voice_core: ^0.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

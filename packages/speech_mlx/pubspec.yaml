@@ -1,0 +1,26 @@
+name: speech_mlx
+description: MLX Audio implementation of provider-neutral batch STT and TTS.
+version: 0.1.0
+resolution: workspace
+homepage: https://github.com/kshdotdev/audio-kit-dart
+repository: https://github.com/kshdotdev/audio-kit-dart
+issue_tracker: https://github.com/kshdotdev/audio-kit-dart/issues
+topics:
+  - speech-to-text
+  - text-to-speech
+  - mlx
+  - on-device-ai
+platforms:
+  macos:
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  audio_core: ^0.1.0
+  mlx_audio: ^0.2.0
+  speech_core: ^0.1.0
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.25.0

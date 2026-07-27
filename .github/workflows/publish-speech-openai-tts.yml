@@ -1,0 +1,26 @@
+name: Publish speech_openai_tts
+
+on:
+  push:
+    tags:
+      - 'speech_openai_tts-v[0-9]+.[0-9]+.[0-9]+'
+      - 'speech_openai_tts-v[0-9]+.[0-9]+.[0-9]+-*'
+
+permissions: {}
+
+jobs:
+  preflight:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-check.yml
+    with:
+      package: speech_openai_tts
+      working-directory: packages/speech_openai_tts
+  publish:
+    needs: preflight
+    permissions:
+      id-token: write
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
+    with:
+      working-directory: packages/speech_openai_tts
+      environment: pub.dev

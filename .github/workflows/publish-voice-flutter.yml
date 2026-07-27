@@ -1,0 +1,26 @@
+name: Publish voice_flutter
+
+on:
+  push:
+    tags:
+      - 'voice_flutter-v[0-9]+.[0-9]+.[0-9]+'
+      - 'voice_flutter-v[0-9]+.[0-9]+.[0-9]+-*'
+
+permissions: {}
+
+jobs:
+  preflight:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-check.yml
+    with:
+      package: voice_flutter
+      working-directory: packages/voice_flutter
+  publish:
+    needs: preflight
+    permissions:
+      id-token: write
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
+    with:
+      working-directory: packages/voice_flutter
+      environment: pub.dev
