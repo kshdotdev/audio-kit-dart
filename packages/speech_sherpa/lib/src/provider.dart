@@ -130,9 +130,15 @@ final class SherpaSpeechProvider extends IdempotentSpeechProvider
     );
     request.cancellation?.throwIfCancelled();
 
-    if (audio.samples.isEmpty) {
-      request.onProgress?.call(1);
-      return BatchRecognitionResult(text: '');
+    // Sub-second audio decodes to noise or to nothing depending on the model,
+    // and an empty transcript reads as "the user said nothing" rather than as
+    // "the recording was too short to try".
+    if (audio.duration < SpeechAudioGuards.minimumRecognitionDuration) {
+      throw sherpaSpeechFailure(
+        SpeechAudioGuards.audioTooShortCode,
+        'recognition',
+        'Recognition needs at least one second of audio.',
+      );
     }
 
     final transcript = await driver.transcribe(audio.samples);

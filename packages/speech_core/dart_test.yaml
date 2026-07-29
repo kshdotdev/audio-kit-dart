@@ -1,0 +1,11 @@
+# Suites that need more than a bare checkout are tagged so the default run
+# stays green offline and without optional hardware. `skip` keeps them out of
+# `dart test`; opt in with `dart test -t <tag> --run-skipped` (`-t <tag>`
+# alone still honours `skip`).
+tags:
+  devices:
+    skip: "drives real capture or playback hardware; run with `dart test -t devices --run-skipped`"
+  e2e:
+    skip: "end-to-end run against a real provider or native backend; run with `dart test -t e2e --run-skipped`"
+  weights:
+    skip: "downloads real model checkpoints; run with `dart test -t weights --run-skipped`"

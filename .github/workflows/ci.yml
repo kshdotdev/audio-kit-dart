@@ -72,7 +72,6 @@ jobs:
           packages/audio_kit_graph/test
           packages/audio_processing/test
           packages/speech_core/test
-          packages/speech_pipeline/test
 
   # audio_flutter_linux carries no native code, so the value here is the GTK
   # shell link plus proof that the Dart-only registrant is picked up for the
@@ -117,7 +116,6 @@ jobs:
           packages/audio_kit_graph/test
           packages/audio_processing/test
           packages/speech_core/test
-          packages/speech_pipeline/test
 
   # Deliberately manual. See .github/workflows/README.md for why this is not on
   # the pull-request path: it has never been run, it depends on a sound daemon

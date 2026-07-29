@@ -18,6 +18,53 @@
    asynchronous and idempotent.
 9. Cancellation and generation IDs make late completion observable and stale
    work rejectable.
+10. Inference-engine packages never own production capture. `fluidaudio_dart`
+    and `mlx_audio` run models; `audio_flutter*` is the only capture owner.
+
+### Engine boundaries
+
+Invariant 10 is what `fluidaudio_dart` 0.4.0 encodes by deprecating
+`FluidMicrophone` and `FluidSystemAudio`, and the `recordToWavPath` parameters
+on both: they keep working through 0.x and are removed at 1.0, and no adapter
+here routes production audio through them. The session-side `feed` APIs are not
+deprecated — an adapter feeds an engine, it does not ask an engine to open a
+device. What those classes uniquely offered, a native fan-out into
+streaming-ASR/EOU/VAD sessions that avoids a channel hop per buffer, is
+performance this stack gives up deliberately: one capture owner, one permission
+prompt, and one route graph are worth more than one saved copy.
+
+**Resampler fidelity.** Two resamplers exist for the same job, and which one
+runs is a decision, not an accident. The provider-neutral graph path resamples
+with `audio_processing`'s `AudioResampler` — pure-Dart linear interpolation,
+stateful per stream, available on every platform. ASR-quality-sensitive batch
+decode is the one place that may reach for higher fidelity, and when it does it
+goes through the adapter-owned native converter (`FluidAudioConverter`, an
+`AVAudioConverter` underneath) inside `speech_fluidaudio`'s boundary — never
+imported by a core, graph, or app package, because that puts an Apple-only SDK
+type back on the neutral path and breaks invariant 7. The rule that binds them:
+**upgrade both together or neither.** Streaming and batch recognition must not
+hear differently resampled audio, or a model-quality question becomes a
+which-path-ran question that no bug report can answer. Today both paths share
+`FluidPcm16MonoConverter`, so both are linear and the invariant holds trivially;
+it stops being trivial the moment either one is improved.
+
+The same rule decides what a graph route may contain. A `speech_fluidaudio`
+session already downmixes and resamples to 16 kHz mono through
+`FluidPcm16MonoConverter`, so a route feeding one must **rechunk only** — an
+`AudioResampler` in front of it converts the audio twice, with the pure-Dart
+linear interpolator stacked on the adapter's own pass. Prefer asking capture
+for 16 kHz directly, so the platform backend converts once, natively, and the
+route carries exactly the rate the model consumes.
+
+**Diarization clustering threshold.** `FluidDiarizationOptions.clusteringThreshold`
+is a cosine *similarity* despite the name: agglomerative clustering merges when
+`cos_sim >= threshold`, so a higher value separates more strictly and produces
+more speakers. FluidAudio's library default is 0.6 and this adapter keeps it.
+Swift Ectos ran stricter — 0.65, user-adjustable across 0.40–0.85 — biasing
+toward over-splitting on purpose, because merging two speakers in a UI is easy
+and recovering an embedding already polluted by a bad merge is not. Apps should
+set the threshold deliberately rather than inherit 0.6 by silence; the right
+value depends on whether the app can merge speakers after the fact.
 
 ## Audio frames and source streams
 
@@ -163,7 +210,9 @@ cannot silently lose callback audio.
 Provider/model/voice capabilities and adapter-specific options are typed.
 Streaming STT, VAD, EOU, and streaming diarization contracts are audio sinks;
 batch operations consume finite `AudioSource` values; TTS returns a cold audio
-source.
+source. The streaming diarization contract is RESERVED — declared for shape,
+implemented by no adapter yet (see its dartdoc); batch diarization is the
+implemented path.
 
 | Adapter | Implemented capability | Boundary and boundedness |
 |---|---|---|
@@ -289,8 +338,22 @@ fan the same synthesized frames into recording, metering, or analysis sinks.
   native-library distribution story is still being decided.
 - The graph is implemented in Dart. FluidAudio-specific fused native routing
   is deferred until profiling justifies it.
-- All packages are published to pub.dev and consumed hosted by Ectos
-  (no path dependencies).
+- All packages use hosted constraints and are consumed hosted by Ectos (no
+  path dependencies), but not all of them are on pub.dev yet. The 13 original
+  packages are published at `0.1.0`. The four newer packages —
+  `audio_flutter_linux`, `audio_flutter_windows`, `audio_aec`, and
+  `speech_sherpa` — are unpublished at `0.1.0-dev`, pending their first
+  release. Until then their dependents (`audio_flutter` on the two platform
+  implementations, `voice_flutter` on `audio_aec`) resolve only inside this
+  workspace and cannot be re-released.
+- The conversation and meeting intelligence packages (`speech_pipeline`,
+  `turn_detection`, `transcript_kit`, `meeting_kit`, and `conversation_core`)
+  have moved to the sibling
+  [conversation-kit-dart](https://github.com/kshdotdev/conversation-kit-dart)
+  repository. They consume this workspace's contracts; nothing here depends on
+  them. That repository is internal: all five are `publish_to: none` and never
+  reach pub.dev, so applications take them as path dependencies. This
+  workspace's release order is independent of them.
 
 See [validation](validation.md) for what the default test suite does and does
 not exercise.

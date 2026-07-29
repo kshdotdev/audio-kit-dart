@@ -400,15 +400,7 @@ final class FluidStreamingSpeechToTextSession extends _FluidConvertedSinkSession
     text: text,
     languageTag: languageTag,
     confidence: confidence,
-    words: <SpeechWord>[
-      for (final timing in timings)
-        if (!timing.start.isNegative && timing.end >= timing.start)
-          SpeechWord(
-            text: timing.text,
-            range: SpeechTimeRange(start: timing.start, end: timing.end),
-            confidence: _safeConfidence(timing.confidence),
-          ),
-    ],
+    words: fluidSpeechWords(timings),
   );
 
   Duration _eventTime(List<FluidDriverTokenTiming> timings) {
@@ -654,6 +646,24 @@ final class FluidEndOfUtteranceSession extends _FluidConvertedSinkSession
     );
   }
 }
+
+/// Maps native token timings onto provider-neutral timed words.
+///
+/// Shared by the streaming and the batch recognition paths so a batch result
+/// carries exactly the words a streaming one does: the native timings are the
+/// same, and two mappers would drift. A timing whose range is negative or
+/// inverted is dropped rather than surfaced — `SpeechTimeRange` rejects it, and
+/// one malformed token must not fail the whole transcript.
+List<SpeechWord> fluidSpeechWords(Iterable<FluidDriverTokenTiming> timings) =>
+    <SpeechWord>[
+      for (final timing in timings)
+        if (!timing.start.isNegative && timing.end >= timing.start)
+          SpeechWord(
+            text: timing.text,
+            range: SpeechTimeRange(start: timing.start, end: timing.end),
+            confidence: _safeConfidence(timing.confidence),
+          ),
+    ];
 
 double? _safeConfidence(double? value) {
   if (value == null || !value.isFinite) {

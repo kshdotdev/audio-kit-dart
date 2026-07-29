@@ -21,7 +21,8 @@ final class FluidAudioSpeechProvider extends IdempotentSpeechProvider
         EndOfUtteranceProvider,
         BatchDiarizationProvider,
         TextToSpeechProvider,
-        CustomizableInverseTextNormalizer {
+        CustomizableInverseTextNormalizer,
+        TranscriptInverseTextNormalizer {
   /// Creates a provider backed by [runtime].
   ///
   /// Tests and alternative transports can inject an adapter-owned runtime;
@@ -265,6 +266,13 @@ final class FluidAudioSpeechProvider extends IdempotentSpeechProvider
           'The recognition source did not produce audio.',
         );
       }
+      if (audio.duration < SpeechAudioGuards.minimumRecognitionDuration) {
+        throw fluidSpeechFailure(
+          SpeechAudioGuards.audioTooShortCode,
+          'recognition',
+          'Recognition needs at least one second of audio.',
+        );
+      }
       ensureOpen();
       driver = await _runtime.createBatchAsr(model);
       final result = await _withCancellation(
@@ -288,6 +296,11 @@ final class FluidAudioSpeechProvider extends IdempotentSpeechProvider
               text: result.text,
               start: Duration.zero,
               end: duration,
+              // One segment for the whole audio: FluidAudio returns a single
+              // transcript, and cutting it into sentences is the batch
+              // pipeline's job, not the adapter's. The word timings ride along
+              // so that cut is possible at all.
+              words: fluidSpeechWords(result.timings),
             ),
         ],
       );
@@ -607,6 +620,61 @@ final class FluidAudioSpeechProvider extends IdempotentSpeechProvider
   }
 
   @override
+  Future<SpeechTranscript> normalizeTranscript(
+    SpeechTranscript transcript, {
+    String? languageTag,
+  }) async {
+    ensureOpen();
+    // A transcript carries the language the recognizer reported, so a caller
+    // that passes no tag still gets the guard instead of English ITN rules
+    // applied to Portuguese.
+    _validateNormalizationLanguage(languageTag ?? transcript.languageTag);
+    if (transcript.text.trim().isEmpty) {
+      return transcript;
+    }
+    final driver = await _inverseTextNormalizer();
+    if (driver is! FluidTranscriptItnDriver) {
+      // A runtime without the whole-transcript native call still satisfies the
+      // contract through the baseline `speech_core` offers every provider that
+      // can only rewrite strings: written-form text, original word timings.
+      return normalizeTranscriptPreservingWords(
+        this,
+        transcript,
+        languageTag: languageTag,
+      );
+    }
+
+    final String normalized;
+    try {
+      normalized = await driver.normalizeTranscript(
+        text: transcript.text,
+        timings: _itnTimings(transcript.words),
+      );
+    } catch (error) {
+      throw fluidSpeechFailure(
+        'fluid_itn_failed',
+        'normalization',
+        'FluidAudio could not normalize the transcript.',
+        cause: error,
+      );
+    }
+    if (normalized == transcript.text) {
+      return transcript;
+    }
+    return SpeechTranscript(
+      text: normalized,
+      // The rewrite happened inside the text, not on the timeline, so the words
+      // that went in are still the true ones — and unlike anything the driver
+      // seam could hand back they keep an absent confidence absent and a
+      // speaker label attached. Word surfaces stay spoken-form; that is the
+      // documented limit of the contract, not a defect of this path.
+      words: transcript.words,
+      languageTag: transcript.languageTag,
+      confidence: transcript.confidence,
+    );
+  }
+
+  @override
   Future<void> addRule(InverseTextNormalizationRule rule) async {
     ensureOpen();
     final driver = await _inverseTextNormalizer();
@@ -846,6 +914,23 @@ Future<T> _withCancellation<T>(
   });
   return Future.any<T>(<Future<T>>[operation, cancelled]);
 }
+
+/// Maps timed words onto the driver timings the transcript ITN path takes.
+///
+/// A word with no confidence goes over as zero. The driver timing type has no
+/// room for "unknown", and nothing rides back on it:
+/// [FluidTranscriptItnDriver.normalizeTranscript] returns text alone, so the
+/// sentinel cannot reappear as a `SpeechWord` that claims zero confidence.
+List<FluidDriverTokenTiming> _itnTimings(List<SpeechWord> words) =>
+    <FluidDriverTokenTiming>[
+      for (final word in words)
+        FluidDriverTokenTiming(
+          text: word.text,
+          start: word.range.start,
+          end: word.range.end,
+          confidence: word.confidence ?? 0,
+        ),
+    ];
 
 double? _safeProviderConfidence(double? value) {
   if (value == null || !value.isFinite) {

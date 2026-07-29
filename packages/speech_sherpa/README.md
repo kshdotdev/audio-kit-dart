@@ -69,8 +69,10 @@ and a bounded left context — it cannot revise a word once the encoder has move
 past it, and it is a smaller English-only model besides. If a transcript is
 produced after the fact, batch remains the better answer; if you need words on
 screen while someone is speaking, this is the path. The alternative for the
-in-between case is `speech_pipeline`, which cuts rolling windows and gives a
-live transcript from any batch provider at higher latency and batch accuracy.
+in-between case is `speech_pipeline` (in the sibling
+[conversation-kit-dart](https://github.com/kshdotdev/conversation-kit-dart)
+repository), which cuts rolling windows and gives a live transcript from any
+batch provider at higher latency and batch accuracy.
 
 *The endpointer is rule-based, not semantic.* `enableEndpoint` runs sherpa's
 three silence rules — trailing silence before speech, trailing silence after

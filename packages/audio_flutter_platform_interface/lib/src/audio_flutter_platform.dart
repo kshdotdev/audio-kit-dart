@@ -59,6 +59,37 @@ abstract class AudioFlutterPlatform extends PlatformInterface {
   /// after the capture starts.
   Future<bool> requestSystemAudioCapturePermission();
 
+  /// Reports the microphone authorization without prompting.
+  ///
+  /// Implementations added this after 0.1.0, so the default body throws
+  /// [UnimplementedError] rather than widening the abstract surface: a
+  /// platform package built against the older contract keeps compiling, and
+  /// callers treat the throw as "this platform has no permission gate".
+  Future<PlatformMicrophonePermissionStatus> microphonePermissionStatus() =>
+      throw UnimplementedError(
+        'microphonePermissionStatus() is not implemented on this platform',
+      );
+
+  /// Prompts for microphone access when the status is still undetermined and
+  /// reports the resulting status.
+  ///
+  /// Never re-prompts: a denied or restricted status is returned unchanged,
+  /// because only the user (or an administrator) can lift it. Carries the same
+  /// [UnimplementedError] default as [microphonePermissionStatus].
+  Future<PlatformMicrophonePermissionStatus> requestMicrophonePermission() =>
+      throw UnimplementedError(
+        'requestMicrophonePermission() is not implemented on this platform',
+      );
+
+  /// Destroys private capture devices this plugin leaked in an earlier run,
+  /// returning how many were reclaimed.
+  ///
+  /// A process killed mid-capture cannot unwind its own devices. Same
+  /// [UnimplementedError] default as the microphone permission pair.
+  Future<int> cleanupOrphanedCaptureDevices() => throw UnimplementedError(
+    'cleanupOrphanedCaptureDevices() is not implemented on this platform',
+  );
+
   Future<List<PlatformAudioInputDevice>> listAudioInputDevices();
 
   Future<List<PlatformAudioProcess>> listAudioProcesses();

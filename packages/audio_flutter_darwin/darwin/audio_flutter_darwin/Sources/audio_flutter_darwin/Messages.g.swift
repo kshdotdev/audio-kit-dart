@@ -205,6 +205,23 @@ enum AudioSessionPhaseMessage: Int, CaseIterable {
   case failed = 6
 }
 
+/// Why the source timeline broke immediately before a frame.
+enum DiscontinuityReasonMessage: Int, CaseIterable {
+  case droppedFrames = 0
+  case sourceRestart = 1
+  case clockReset = 2
+  case formatChange = 3
+  case unknown = 4
+}
+
+/// Mirrors `AVAuthorizationStatus` for the audio capture device.
+enum MicrophonePermissionStatusMessage: Int, CaseIterable {
+  case notDetermined = 0
+  case granted = 1
+  case denied = 2
+  case restricted = 3
+}
+
 /// Generated class from Pigeon that represents data sent in messages.
 struct PcmFormatMessage: Hashable, CustomStringConvertible {
   var sampleRate: Int64
@@ -378,6 +395,9 @@ struct AudioFrameMessage: Hashable, CustomStringConvertible {
   var timestampMicros: Int64
   var float32Samples: FlutterStandardTypedData
   var droppedFramesBefore: Int64
+  /// Null when the frame continues the previous one. Set for every reported
+  /// gap, including the ones a rebuilt capture chain opens with no frame loss.
+  var discontinuityReason: DiscontinuityReasonMessage? = nil
 
 
   // swift-format-ignore: AlwaysUseLowerCamelCase
@@ -388,6 +408,7 @@ struct AudioFrameMessage: Hashable, CustomStringConvertible {
     let timestampMicros = pigeonVar_list[3] as! Int64
     let float32Samples = pigeonVar_list[4] as! FlutterStandardTypedData
     let droppedFramesBefore = pigeonVar_list[5] as! Int64
+    let discontinuityReason: DiscontinuityReasonMessage? = nilOrValue(pigeonVar_list[6])
 
     return AudioFrameMessage(
       sessionId: sessionId,
@@ -395,7 +416,8 @@ struct AudioFrameMessage: Hashable, CustomStringConvertible {
       sampleOffset: sampleOffset,
       timestampMicros: timestampMicros,
       float32Samples: float32Samples,
-      droppedFramesBefore: droppedFramesBefore
+      droppedFramesBefore: droppedFramesBefore,
+      discontinuityReason: discontinuityReason
     )
   }
   func toList() -> [Any?] {
@@ -406,13 +428,14 @@ struct AudioFrameMessage: Hashable, CustomStringConvertible {
       timestampMicros,
       float32Samples,
       droppedFramesBefore,
+      discontinuityReason,
     ]
   }
   static func == (lhs: AudioFrameMessage, rhs: AudioFrameMessage) -> Bool {
     if Swift.type(of: lhs) != Swift.type(of: rhs) {
       return false
     }
-    return MessagesPigeonInternal.deepEquals(lhs.sessionId, rhs.sessionId) && MessagesPigeonInternal.deepEquals(lhs.sequence, rhs.sequence) && MessagesPigeonInternal.deepEquals(lhs.sampleOffset, rhs.sampleOffset) && MessagesPigeonInternal.deepEquals(lhs.timestampMicros, rhs.timestampMicros) && MessagesPigeonInternal.deepEquals(lhs.float32Samples, rhs.float32Samples) && MessagesPigeonInternal.deepEquals(lhs.droppedFramesBefore, rhs.droppedFramesBefore)
+    return MessagesPigeonInternal.deepEquals(lhs.sessionId, rhs.sessionId) && MessagesPigeonInternal.deepEquals(lhs.sequence, rhs.sequence) && MessagesPigeonInternal.deepEquals(lhs.sampleOffset, rhs.sampleOffset) && MessagesPigeonInternal.deepEquals(lhs.timestampMicros, rhs.timestampMicros) && MessagesPigeonInternal.deepEquals(lhs.float32Samples, rhs.float32Samples) && MessagesPigeonInternal.deepEquals(lhs.droppedFramesBefore, rhs.droppedFramesBefore) && MessagesPigeonInternal.deepEquals(lhs.discontinuityReason, rhs.discontinuityReason)
   }
 
   func hash(into hasher: inout Hasher) {
@@ -423,10 +446,11 @@ struct AudioFrameMessage: Hashable, CustomStringConvertible {
     MessagesPigeonInternal.deepHash(value: timestampMicros, hasher: &hasher)
     MessagesPigeonInternal.deepHash(value: float32Samples, hasher: &hasher)
     MessagesPigeonInternal.deepHash(value: droppedFramesBefore, hasher: &hasher)
+    MessagesPigeonInternal.deepHash(value: discontinuityReason, hasher: &hasher)
   }
 
   public var description: String {
-    return "AudioFrameMessage(sessionId: \(String(describing: sessionId)), sequence: \(String(describing: sequence)), sampleOffset: \(String(describing: sampleOffset)), timestampMicros: \(String(describing: timestampMicros)), float32Samples: \(String(describing: float32Samples)), droppedFramesBefore: \(String(describing: droppedFramesBefore)))"
+    return "AudioFrameMessage(sessionId: \(String(describing: sessionId)), sequence: \(String(describing: sequence)), sampleOffset: \(String(describing: sampleOffset)), timestampMicros: \(String(describing: timestampMicros)), float32Samples: \(String(describing: float32Samples)), droppedFramesBefore: \(String(describing: droppedFramesBefore)), discontinuityReason: \(String(describing: discontinuityReason)))"
   }
 }
 
@@ -478,6 +502,17 @@ struct AudioSessionEventMessage: Hashable, CustomStringConvertible {
   var message: String? = nil
   var receivingAudio: Bool? = nil
   var callbackCount: Int64? = nil
+  /// Largest absolute sample seen since the session started, 0...1 nominal.
+  var peakAmplitude: Double? = nil
+  /// Root mean square over every converted sample since the session started.
+  var rms: Double? = nil
+  /// Percentage of converted callback buffers that carried non-zero audio.
+  var nonZeroFramePercent: Double? = nil
+  /// Hardware render callbacks delivered, including buffers a bounded queue
+  /// dropped before conversion.
+  var renderCycles: Int64? = nil
+  /// Milliseconds from session creation to the first non-zero buffer.
+  var firstAudioAtMillis: Int64? = nil
 
 
   // swift-format-ignore: AlwaysUseLowerCamelCase
@@ -488,6 +523,11 @@ struct AudioSessionEventMessage: Hashable, CustomStringConvertible {
     let message: String? = nilOrValue(pigeonVar_list[3])
     let receivingAudio: Bool? = nilOrValue(pigeonVar_list[4])
     let callbackCount: Int64? = nilOrValue(pigeonVar_list[5])
+    let peakAmplitude: Double? = nilOrValue(pigeonVar_list[6])
+    let rms: Double? = nilOrValue(pigeonVar_list[7])
+    let nonZeroFramePercent: Double? = nilOrValue(pigeonVar_list[8])
+    let renderCycles: Int64? = nilOrValue(pigeonVar_list[9])
+    let firstAudioAtMillis: Int64? = nilOrValue(pigeonVar_list[10])
 
     return AudioSessionEventMessage(
       sessionId: sessionId,
@@ -495,7 +535,12 @@ struct AudioSessionEventMessage: Hashable, CustomStringConvertible {
       code: code,
       message: message,
       receivingAudio: receivingAudio,
-      callbackCount: callbackCount
+      callbackCount: callbackCount,
+      peakAmplitude: peakAmplitude,
+      rms: rms,
+      nonZeroFramePercent: nonZeroFramePercent,
+      renderCycles: renderCycles,
+      firstAudioAtMillis: firstAudioAtMillis
     )
   }
   func toList() -> [Any?] {
@@ -506,13 +551,18 @@ struct AudioSessionEventMessage: Hashable, CustomStringConvertible {
       message,
       receivingAudio,
       callbackCount,
+      peakAmplitude,
+      rms,
+      nonZeroFramePercent,
+      renderCycles,
+      firstAudioAtMillis,
     ]
   }
   static func == (lhs: AudioSessionEventMessage, rhs: AudioSessionEventMessage) -> Bool {
     if Swift.type(of: lhs) != Swift.type(of: rhs) {
       return false
     }
-    return MessagesPigeonInternal.deepEquals(lhs.sessionId, rhs.sessionId) && MessagesPigeonInternal.deepEquals(lhs.phase, rhs.phase) && MessagesPigeonInternal.deepEquals(lhs.code, rhs.code) && MessagesPigeonInternal.deepEquals(lhs.message, rhs.message) && MessagesPigeonInternal.deepEquals(lhs.receivingAudio, rhs.receivingAudio) && MessagesPigeonInternal.deepEquals(lhs.callbackCount, rhs.callbackCount)
+    return MessagesPigeonInternal.deepEquals(lhs.sessionId, rhs.sessionId) && MessagesPigeonInternal.deepEquals(lhs.phase, rhs.phase) && MessagesPigeonInternal.deepEquals(lhs.code, rhs.code) && MessagesPigeonInternal.deepEquals(lhs.message, rhs.message) && MessagesPigeonInternal.deepEquals(lhs.receivingAudio, rhs.receivingAudio) && MessagesPigeonInternal.deepEquals(lhs.callbackCount, rhs.callbackCount) && MessagesPigeonInternal.deepEquals(lhs.peakAmplitude, rhs.peakAmplitude) && MessagesPigeonInternal.deepEquals(lhs.rms, rhs.rms) && MessagesPigeonInternal.deepEquals(lhs.nonZeroFramePercent, rhs.nonZeroFramePercent) && MessagesPigeonInternal.deepEquals(lhs.renderCycles, rhs.renderCycles) && MessagesPigeonInternal.deepEquals(lhs.firstAudioAtMillis, rhs.firstAudioAtMillis)
   }
 
   func hash(into hasher: inout Hasher) {
@@ -523,10 +573,15 @@ struct AudioSessionEventMessage: Hashable, CustomStringConvertible {
     MessagesPigeonInternal.deepHash(value: message, hasher: &hasher)
     MessagesPigeonInternal.deepHash(value: receivingAudio, hasher: &hasher)
     MessagesPigeonInternal.deepHash(value: callbackCount, hasher: &hasher)
+    MessagesPigeonInternal.deepHash(value: peakAmplitude, hasher: &hasher)
+    MessagesPigeonInternal.deepHash(value: rms, hasher: &hasher)
+    MessagesPigeonInternal.deepHash(value: nonZeroFramePercent, hasher: &hasher)
+    MessagesPigeonInternal.deepHash(value: renderCycles, hasher: &hasher)
+    MessagesPigeonInternal.deepHash(value: firstAudioAtMillis, hasher: &hasher)
   }
 
   public var description: String {
-    return "AudioSessionEventMessage(sessionId: \(String(describing: sessionId)), phase: \(String(describing: phase)), code: \(String(describing: code)), message: \(String(describing: message)), receivingAudio: \(String(describing: receivingAudio)), callbackCount: \(String(describing: callbackCount)))"
+    return "AudioSessionEventMessage(sessionId: \(String(describing: sessionId)), phase: \(String(describing: phase)), code: \(String(describing: code)), message: \(String(describing: message)), receivingAudio: \(String(describing: receivingAudio)), callbackCount: \(String(describing: callbackCount)), peakAmplitude: \(String(describing: peakAmplitude)), rms: \(String(describing: rms)), nonZeroFramePercent: \(String(describing: nonZeroFramePercent)), renderCycles: \(String(describing: renderCycles)), firstAudioAtMillis: \(String(describing: firstAudioAtMillis)))"
   }
 }
 
@@ -727,24 +782,36 @@ private class MessagesPigeonCodecReader: FlutterStandardReader {
       }
       return nil
     case 132:
-      return PcmFormatMessage.fromList(self.readValue() as! [Any?])
+      let enumResultAsInt: Int? = nilOrValue(self.readValue() as! Int?)
+      if let enumResultAsInt = enumResultAsInt {
+        return DiscontinuityReasonMessage(rawValue: enumResultAsInt)
+      }
+      return nil
     case 133:
-      return CaptureRequestMessage.fromList(self.readValue() as! [Any?])
+      let enumResultAsInt: Int? = nilOrValue(self.readValue() as! Int?)
+      if let enumResultAsInt = enumResultAsInt {
+        return MicrophonePermissionStatusMessage(rawValue: enumResultAsInt)
+      }
+      return nil
     case 134:
-      return CaptureSessionInfoMessage.fromList(self.readValue() as! [Any?])
+      return PcmFormatMessage.fromList(self.readValue() as! [Any?])
     case 135:
-      return AudioFrameMessage.fromList(self.readValue() as! [Any?])
+      return CaptureRequestMessage.fromList(self.readValue() as! [Any?])
     case 136:
-      return AudioFrameBatchMessage.fromList(self.readValue() as! [Any?])
+      return CaptureSessionInfoMessage.fromList(self.readValue() as! [Any?])
     case 137:
-      return AudioSessionEventMessage.fromList(self.readValue() as! [Any?])
+      return AudioFrameMessage.fromList(self.readValue() as! [Any?])
     case 138:
-      return AudioProcessMessage.fromList(self.readValue() as! [Any?])
+      return AudioFrameBatchMessage.fromList(self.readValue() as! [Any?])
     case 139:
-      return AudioInputDeviceMessage.fromList(self.readValue() as! [Any?])
+      return AudioSessionEventMessage.fromList(self.readValue() as! [Any?])
     case 140:
-      return PlaybackRequestMessage.fromList(self.readValue() as! [Any?])
+      return AudioProcessMessage.fromList(self.readValue() as! [Any?])
     case 141:
+      return AudioInputDeviceMessage.fromList(self.readValue() as! [Any?])
+    case 142:
+      return PlaybackRequestMessage.fromList(self.readValue() as! [Any?])
+    case 143:
       return PlaybackSessionInfoMessage.fromList(self.readValue() as! [Any?])
     default:
       return super.readValue(ofType: type)
@@ -763,35 +830,41 @@ private class MessagesPigeonCodecWriter: FlutterStandardWriter {
     } else if let value = value as? AudioSessionPhaseMessage {
       super.writeByte(131)
       super.writeValue(value.rawValue)
-    } else if let value = value as? PcmFormatMessage {
+    } else if let value = value as? DiscontinuityReasonMessage {
       super.writeByte(132)
-      super.writeValue(value.toList())
-    } else if let value = value as? CaptureRequestMessage {
+      super.writeValue(value.rawValue)
+    } else if let value = value as? MicrophonePermissionStatusMessage {
       super.writeByte(133)
-      super.writeValue(value.toList())
-    } else if let value = value as? CaptureSessionInfoMessage {
+      super.writeValue(value.rawValue)
+    } else if let value = value as? PcmFormatMessage {
       super.writeByte(134)
       super.writeValue(value.toList())
-    } else if let value = value as? AudioFrameMessage {
+    } else if let value = value as? CaptureRequestMessage {
       super.writeByte(135)
       super.writeValue(value.toList())
-    } else if let value = value as? AudioFrameBatchMessage {
+    } else if let value = value as? CaptureSessionInfoMessage {
       super.writeByte(136)
       super.writeValue(value.toList())
-    } else if let value = value as? AudioSessionEventMessage {
+    } else if let value = value as? AudioFrameMessage {
       super.writeByte(137)
       super.writeValue(value.toList())
-    } else if let value = value as? AudioProcessMessage {
+    } else if let value = value as? AudioFrameBatchMessage {
       super.writeByte(138)
       super.writeValue(value.toList())
-    } else if let value = value as? AudioInputDeviceMessage {
+    } else if let value = value as? AudioSessionEventMessage {
       super.writeByte(139)
       super.writeValue(value.toList())
-    } else if let value = value as? PlaybackRequestMessage {
+    } else if let value = value as? AudioProcessMessage {
       super.writeByte(140)
       super.writeValue(value.toList())
-    } else if let value = value as? PlaybackSessionInfoMessage {
+    } else if let value = value as? AudioInputDeviceMessage {
       super.writeByte(141)
+      super.writeValue(value.toList())
+    } else if let value = value as? PlaybackRequestMessage {
+      super.writeByte(142)
+      super.writeValue(value.toList())
+    } else if let value = value as? PlaybackSessionInfoMessage {
+      super.writeByte(143)
       super.writeValue(value.toList())
     } else {
       super.writeValue(value)
@@ -826,6 +899,9 @@ protocol DarwinAudioHostApi {
   func disposeCapture(sessionId: Int64, completion: @escaping (Result<Void, Error>) -> Void)
   func isSystemAudioCaptureSupported(completion: @escaping (Result<Bool, Error>) -> Void)
   func requestSystemAudioCapturePermission(completion: @escaping (Result<Bool, Error>) -> Void)
+  func microphonePermissionStatus(completion: @escaping (Result<MicrophonePermissionStatusMessage, Error>) -> Void)
+  func requestMicrophonePermission(completion: @escaping (Result<MicrophonePermissionStatusMessage, Error>) -> Void)
+  func cleanupOrphanedAggregateDevices(completion: @escaping (Result<Int64, Error>) -> Void)
   func listAudioInputDevices(completion: @escaping (Result<[AudioInputDeviceMessage], Error>) -> Void)
   func listAudioProcesses(completion: @escaping (Result<[AudioProcessMessage], Error>) -> Void)
   func preparePlayback(request: PlaybackRequestMessage, completion: @escaping (Result<PlaybackSessionInfoMessage, Error>) -> Void)
@@ -975,6 +1051,51 @@ class DarwinAudioHostApiSetup {
       }
     } else {
       requestSystemAudioCapturePermissionChannel.setMessageHandler(nil)
+    }
+    let microphonePermissionStatusChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.microphonePermissionStatus\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
+    if let api = api {
+      microphonePermissionStatusChannel.setMessageHandler { _, reply in
+        api.microphonePermissionStatus { result in
+          switch result {
+          case .success(let res):
+            reply(wrapResult(res))
+          case .failure(let error):
+            reply(wrapError(error))
+          }
+        }
+      }
+    } else {
+      microphonePermissionStatusChannel.setMessageHandler(nil)
+    }
+    let requestMicrophonePermissionChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.requestMicrophonePermission\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
+    if let api = api {
+      requestMicrophonePermissionChannel.setMessageHandler { _, reply in
+        api.requestMicrophonePermission { result in
+          switch result {
+          case .success(let res):
+            reply(wrapResult(res))
+          case .failure(let error):
+            reply(wrapError(error))
+          }
+        }
+      }
+    } else {
+      requestMicrophonePermissionChannel.setMessageHandler(nil)
+    }
+    let cleanupOrphanedAggregateDevicesChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.cleanupOrphanedAggregateDevices\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
+    if let api = api {
+      cleanupOrphanedAggregateDevicesChannel.setMessageHandler { _, reply in
+        api.cleanupOrphanedAggregateDevices { result in
+          switch result {
+          case .success(let res):
+            reply(wrapResult(res))
+          case .failure(let error):
+            reply(wrapError(error))
+          }
+        }
+      }
+    } else {
+      cleanupOrphanedAggregateDevicesChannel.setMessageHandler(nil)
     }
     let listAudioInputDevicesChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.listAudioInputDevices\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
     if let api = api {

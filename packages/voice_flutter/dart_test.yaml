@@ -1,0 +1,11 @@
+# Suites that need more than a bare checkout are tagged so the default run
+# stays green offline and without optional hardware. `skip` keeps them out of
+# `flutter test`; opt in with `flutter test -t <tag> --run-skipped`
+# (`-t <tag>` alone still honours `skip`).
+tags:
+  devices:
+    skip: "drives real capture or playback hardware; run with `flutter test -t devices --run-skipped`"
+  e2e:
+    skip: "end-to-end run against a real provider or native backend; run with `flutter test -t e2e --run-skipped`"
+  weights:
+    skip: "downloads real model checkpoints; run with `flutter test -t weights --run-skipped`"

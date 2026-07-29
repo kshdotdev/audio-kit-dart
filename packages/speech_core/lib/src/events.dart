@@ -135,6 +135,12 @@ final class EndOfUtteranceEvent {
 }
 
 /// Updated speaker segmentation for an audio interval.
+///
+/// **RESERVED — no adapter implements streaming diarization yet.** Nothing
+/// emits this event; see `DiarizationSession` for what that means and why the
+/// contract may change before the first implementation. In particular [isFinal]
+/// and the revision semantics behind it are unproven — the first streaming
+/// adapter decides whether an emitted speaker label may later be revised.
 final class DiarizationEvent {
   DiarizationEvent({
     required Iterable<SpeakerSegment> segments,

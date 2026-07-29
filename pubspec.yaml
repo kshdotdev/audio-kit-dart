@@ -9,7 +9,6 @@ workspace:
   - packages/audio_kit_graph
   - packages/audio_processing
   - packages/speech_core
-  - packages/speech_pipeline
   - packages/audio_flutter_platform_interface
   - packages/audio_flutter
   - packages/audio_flutter_darwin
@@ -21,7 +20,6 @@ workspace:
   - packages/audio_flutter_linux
   - packages/audio_flutter_windows
   - packages/audio_aec
-  - packages/meeting_kit
   - packages/speech_deepgram
   - packages/speech_openai_tts
   - packages/audio_flutter/example

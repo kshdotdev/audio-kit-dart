@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:audio_core/audio_core.dart';
 
+import 'conversion.dart';
 import 'drivers.dart';
 import 'session_support.dart';
 
@@ -318,6 +319,10 @@ final class FluidTtsAudioSourceSession extends FluidManagedSession
     if (isTerminal) {
       return;
     }
+    if (_sequence == 0 && text.trim().isNotEmpty) {
+      await _failEmptySynthesis();
+      return;
+    }
     try {
       await _closeDriver();
       if (!isTerminal) {
@@ -334,6 +339,30 @@ final class FluidTtsAudioSourceSession extends FluidManagedSession
       Error.throwWithStackTrace(error, stackTrace);
     }
     await _closeFrames();
+  }
+
+  /// Fails a synthesis that ended without ever producing a frame.
+  ///
+  /// Kokoro answers over-long input with a clean, empty stream: no error, no
+  /// audio, a route that finishes normally and renders nothing. That is
+  /// indistinguishable from a reply nobody could hear, so the source fails
+  /// instead of finishing. Empty input text is not this case — the provider
+  /// rejects it up front with `fluid_empty_text` — and still finishes clean.
+  Future<void> _failEmptySynthesis() async {
+    const message = 'FluidAudio synthesized no audio for the requested text.';
+    if (!_framesController.isClosed) {
+      _framesController.addError(
+        fluidSpeechFailure('fluid_tts_empty_synthesis', 'synthesis', message),
+        StackTrace.current,
+      );
+    }
+    await abort(
+      failure: fluidAudioFailure(
+        'fluid_tts_empty_synthesis',
+        AudioFailureStage.provider,
+        message,
+      ),
+    );
   }
 
   Future<void> _fail(Object error, StackTrace stackTrace) async {

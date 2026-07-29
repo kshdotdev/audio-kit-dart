@@ -14,3 +14,9 @@
   batch model never advertises `streamingSpeechToText` and vice versa.
 - `SherpaStreamingRecognitionOptions` exposes sherpa's three endpointing rules.
   They are silence timers over decoder state, not an end-of-utterance model.
+- `transcribe` refuses audio shorter than
+  `SpeechAudioGuards.minimumRecognitionDuration` with the typed
+  `speech_audio_too_short` failure, the same guard every batch provider
+  enforces. This replaces the empty-audio path that returned an empty
+  transcript: "too short to try" and "the user said nothing" are different
+  answers and only one of them is actionable.

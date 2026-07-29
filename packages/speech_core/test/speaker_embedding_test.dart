@@ -240,6 +240,7 @@ void main() {
       'diarization',
       'speakerEmbedding',
       'inverseTextNormalization',
+      'turnCompletion',
     ]);
   });
 }

@@ -106,6 +106,20 @@ final class DarwinAudioFlutterPlatform extends AudioFlutterPlatform {
       _host.requestSystemAudioCapturePermission();
 
   @override
+  Future<PlatformMicrophonePermissionStatus>
+  microphonePermissionStatus() async =>
+      _decodePermission(await _host.microphonePermissionStatus());
+
+  @override
+  Future<PlatformMicrophonePermissionStatus>
+  requestMicrophonePermission() async =>
+      _decodePermission(await _host.requestMicrophonePermission());
+
+  @override
+  Future<int> cleanupOrphanedCaptureDevices() =>
+      _host.cleanupOrphanedAggregateDevices();
+
+  @override
   Future<List<PlatformAudioInputDevice>> listAudioInputDevices() async {
     final List<pigeon.AudioInputDeviceMessage> devices = await _host
         .listAudioInputDevices();
@@ -223,6 +237,19 @@ PlatformAudioFrame _decodeFrame(pigeon.AudioFrameMessage frame) =>
       timestamp: Duration(microseconds: frame.timestampMicros),
       samples: _decodeFloat32(frame.float32Samples),
       droppedFramesBefore: frame.droppedFramesBefore,
+      discontinuityReason: switch (frame.discontinuityReason) {
+        null => null,
+        pigeon.DiscontinuityReasonMessage.droppedFrames =>
+          PlatformAudioDiscontinuityReason.droppedFrames,
+        pigeon.DiscontinuityReasonMessage.sourceRestart =>
+          PlatformAudioDiscontinuityReason.sourceRestart,
+        pigeon.DiscontinuityReasonMessage.clockReset =>
+          PlatformAudioDiscontinuityReason.clockReset,
+        pigeon.DiscontinuityReasonMessage.formatChange =>
+          PlatformAudioDiscontinuityReason.formatChange,
+        pigeon.DiscontinuityReasonMessage.unknown =>
+          PlatformAudioDiscontinuityReason.unknown,
+      },
     );
 
 Float32List _decodeFloat32(Uint8List bytes) {
@@ -273,4 +300,22 @@ PlatformAudioSessionEvent _decodeEvent(pigeon.AudioSessionEventMessage event) =>
       message: event.message,
       receivingAudio: event.receivingAudio,
       callbackCount: event.callbackCount,
+      peakAmplitude: event.peakAmplitude,
+      rms: event.rms,
+      nonZeroFramePercent: event.nonZeroFramePercent,
+      renderCycles: event.renderCycles,
+      firstAudioAtMillis: event.firstAudioAtMillis,
     );
+
+PlatformMicrophonePermissionStatus _decodePermission(
+  pigeon.MicrophonePermissionStatusMessage status,
+) => switch (status) {
+  pigeon.MicrophonePermissionStatusMessage.notDetermined =>
+    PlatformMicrophonePermissionStatus.notDetermined,
+  pigeon.MicrophonePermissionStatusMessage.granted =>
+    PlatformMicrophonePermissionStatus.granted,
+  pigeon.MicrophonePermissionStatusMessage.denied =>
+    PlatformMicrophonePermissionStatus.denied,
+  pigeon.MicrophonePermissionStatusMessage.restricted =>
+    PlatformMicrophonePermissionStatus.restricted,
+};

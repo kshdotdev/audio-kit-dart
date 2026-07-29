@@ -29,6 +29,16 @@ from this workspace so applications can compose only the layers they need.
 The portable core is pure Dart. Flutter, platform-channel, native model,
 network, and provider SDK dependencies remain in integration packages.
 
+The conversation and meeting intelligence layer lives in the sibling
+[conversation-kit-dart](https://github.com/kshdotdev/conversation-kit-dart)
+workspace: `speech_pipeline`, `turn_detection`, `transcript_kit`,
+`meeting_kit`, and `conversation_core`. Those packages consume the contracts
+published here — transcript assembly, speaker identity, turn boundaries,
+question detection, dictation logic, and meeting detection are deliberately
+out of scope for this repo, which stops at audio and speech I/O and the
+provider adapters. That workspace is internal and does not publish to pub.dev;
+this repository is the published half of the stack.
+
 ## Install and compose
 
 Add only the packages required by the application:

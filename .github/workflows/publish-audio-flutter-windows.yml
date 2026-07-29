@@ -1,0 +1,26 @@
+name: Publish audio_flutter_windows
+
+on:
+  push:
+    tags:
+      - 'audio_flutter_windows-v[0-9]+.[0-9]+.[0-9]+'
+      - 'audio_flutter_windows-v[0-9]+.[0-9]+.[0-9]+-*'
+
+permissions: {}
+
+jobs:
+  preflight:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-check.yml
+    with:
+      package: audio_flutter_windows
+      working-directory: packages/audio_flutter_windows
+  publish:
+    needs: preflight
+    permissions:
+      id-token: write
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
+    with:
+      working-directory: packages/audio_flutter_windows
+      environment: pub.dev

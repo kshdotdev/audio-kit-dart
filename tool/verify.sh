@@ -11,7 +11,6 @@ readonly package_dirs=(
   packages/audio_kit_graph
   packages/audio_processing
   packages/speech_core
-  packages/speech_pipeline
   packages/audio_flutter_darwin
   packages/audio_flutter
   packages/voice_core
@@ -23,7 +22,6 @@ readonly package_dirs=(
   packages/audio_flutter_linux
   packages/audio_flutter_windows
   packages/audio_aec
-  packages/meeting_kit
   packages/voice_flutter
 )
 

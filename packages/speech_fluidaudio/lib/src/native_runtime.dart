@@ -408,7 +408,8 @@ final class _NativeDiarizationDriver extends _NativeDriver
   Future<void> closeNative() => _diarizer.dispose();
 }
 
-final class _NativeItnDriver extends _NativeDriver implements FluidItnDriver {
+final class _NativeItnDriver extends _NativeDriver
+    implements FluidTranscriptItnDriver {
   _NativeItnDriver(this._normalizer);
 
   final native.FluidItn _normalizer;
@@ -416,6 +417,37 @@ final class _NativeItnDriver extends _NativeDriver implements FluidItnDriver {
   @override
   Future<String> normalizeSentence(String text) =>
       _normalizer.normalizeSentence(text);
+
+  @override
+  Future<String> normalizeTranscript({
+    required String text,
+    required List<FluidDriverTokenTiming> timings,
+  }) async {
+    // `FluidAsrResult` is the shape FluidAudio's ITN host accepts for a whole
+    // transcription, but only the text and the token timings take part in
+    // normalization: the confidence, the durations and the token IDs are
+    // echoed back unread. Neutral values go over the wire rather than invented
+    // ones, and the caller keeps the real confidence on the Dart side.
+    final normalized = await _normalizer.normalizeResult(
+      native.FluidAsrResult(
+        text: text,
+        confidence: 0,
+        duration: Duration.zero,
+        processingTime: Duration.zero,
+        tokenTimings: <native.FluidTokenTiming>[
+          for (final timing in timings)
+            native.FluidTokenTiming(
+              token: timing.text,
+              tokenId: 0,
+              start: timing.start,
+              end: timing.end,
+              confidence: timing.confidence,
+            ),
+        ],
+      ),
+    );
+    return normalized.text;
+  }
 
   @override
   Future<void> addRule({required String spoken, required String written}) =>

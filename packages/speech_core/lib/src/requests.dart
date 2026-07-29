@@ -1,5 +1,6 @@
 import 'package:audio_core/audio_core.dart';
 
+import 'transcript.dart';
 import 'validation.dart';
 
 /// Marker for typed provider-specific options.
@@ -119,7 +120,8 @@ final class BatchRecognitionSegment {
     required this.start,
     required this.end,
     this.speakerId,
-  }) {
+    Iterable<SpeechWord> words = const <SpeechWord>[],
+  }) : words = List<SpeechWord>.unmodifiable(words) {
     requireNonNegativeDuration(start, 'start');
     if (end < start) {
       throw ArgumentError.value(end, 'end', 'Must not precede start.');
@@ -138,6 +140,18 @@ final class BatchRecognitionSegment {
 
   /// Provider-neutral speaker label.
   final String? speakerId;
+
+  /// Timed words inside this segment, when the provider reports timings.
+  ///
+  /// The streaming path has always carried them on
+  /// [SpeechTranscript.words]; this is the batch counterpart, and without it a
+  /// batch result is one untimed block of text no consumer can cut into
+  /// sentences, align to a diarization span, or seek back into the audio.
+  ///
+  /// Empty for providers that report no timings, so the field never claims
+  /// precision the model did not produce. Offsets are relative to the same
+  /// origin as [start] and [end].
+  final List<SpeechWord> words;
 }
 
 /// Configuration for a streaming VAD session.
@@ -204,6 +218,11 @@ final class EndOfUtteranceRequest {
 }
 
 /// Configuration for a streaming diarization session.
+///
+/// **RESERVED — no adapter implements streaming diarization yet.** This request
+/// has no consumer; see `DiarizationSession` for what that means and why the
+/// contract may change before the first implementation. Batch diarization uses
+/// `BatchDiarizationRequest`.
 final class DiarizationRequest {
   DiarizationRequest({
     required this.inputFormat,

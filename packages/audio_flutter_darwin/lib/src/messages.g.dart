@@ -118,6 +118,23 @@ enum AudioSessionPhaseMessage {
   failed,
 }
 
+/// Why the source timeline broke immediately before a frame.
+enum DiscontinuityReasonMessage {
+  droppedFrames,
+  sourceRestart,
+  clockReset,
+  formatChange,
+  unknown,
+}
+
+/// Mirrors `AVAuthorizationStatus` for the audio capture device.
+enum MicrophonePermissionStatusMessage {
+  notDetermined,
+  granted,
+  denied,
+  restricted,
+}
+
 class PcmFormatMessage {
   PcmFormatMessage({
     required this.sampleRate,
@@ -321,6 +338,7 @@ class AudioFrameMessage {
     required this.timestampMicros,
     required this.float32Samples,
     required this.droppedFramesBefore,
+    this.discontinuityReason,
   });
 
   int sessionId;
@@ -335,6 +353,10 @@ class AudioFrameMessage {
 
   int droppedFramesBefore;
 
+  /// Null when the frame continues the previous one. Set for every reported
+  /// gap, including the ones a rebuilt capture chain opens with no frame loss.
+  DiscontinuityReasonMessage? discontinuityReason;
+
   List<Object?> _toList() {
     return <Object?>[
       sessionId,
@@ -343,6 +365,7 @@ class AudioFrameMessage {
       timestampMicros,
       float32Samples,
       droppedFramesBefore,
+      discontinuityReason,
     ];
   }
 
@@ -358,6 +381,7 @@ class AudioFrameMessage {
       timestampMicros: result[3]! as int,
       float32Samples: result[4]! as Uint8List,
       droppedFramesBefore: result[5]! as int,
+      discontinuityReason: result[6] as DiscontinuityReasonMessage?,
     );
   }
 
@@ -370,7 +394,7 @@ class AudioFrameMessage {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(sessionId, other.sessionId) && _deepEquals(sequence, other.sequence) && _deepEquals(sampleOffset, other.sampleOffset) && _deepEquals(timestampMicros, other.timestampMicros) && _deepEquals(float32Samples, other.float32Samples) && _deepEquals(droppedFramesBefore, other.droppedFramesBefore);
+    return _deepEquals(sessionId, other.sessionId) && _deepEquals(sequence, other.sequence) && _deepEquals(sampleOffset, other.sampleOffset) && _deepEquals(timestampMicros, other.timestampMicros) && _deepEquals(float32Samples, other.float32Samples) && _deepEquals(droppedFramesBefore, other.droppedFramesBefore) && _deepEquals(discontinuityReason, other.discontinuityReason);
   }
 
   @override
@@ -379,7 +403,7 @@ class AudioFrameMessage {
 
   @override
   String toString() {
-    return 'AudioFrameMessage(sessionId: $sessionId, sequence: $sequence, sampleOffset: $sampleOffset, timestampMicros: $timestampMicros, float32Samples: $float32Samples, droppedFramesBefore: $droppedFramesBefore)';
+    return 'AudioFrameMessage(sessionId: $sessionId, sequence: $sequence, sampleOffset: $sampleOffset, timestampMicros: $timestampMicros, float32Samples: $float32Samples, droppedFramesBefore: $droppedFramesBefore, discontinuityReason: $discontinuityReason)';
   }
 }
 
@@ -441,6 +465,11 @@ class AudioSessionEventMessage {
     this.message,
     this.receivingAudio,
     this.callbackCount,
+    this.peakAmplitude,
+    this.rms,
+    this.nonZeroFramePercent,
+    this.renderCycles,
+    this.firstAudioAtMillis,
   });
 
   int sessionId;
@@ -455,6 +484,22 @@ class AudioSessionEventMessage {
 
   int? callbackCount;
 
+  /// Largest absolute sample seen since the session started, 0...1 nominal.
+  double? peakAmplitude;
+
+  /// Root mean square over every converted sample since the session started.
+  double? rms;
+
+  /// Percentage of converted callback buffers that carried non-zero audio.
+  double? nonZeroFramePercent;
+
+  /// Hardware render callbacks delivered, including buffers a bounded queue
+  /// dropped before conversion.
+  int? renderCycles;
+
+  /// Milliseconds from session creation to the first non-zero buffer.
+  int? firstAudioAtMillis;
+
   List<Object?> _toList() {
     return <Object?>[
       sessionId,
@@ -463,6 +508,11 @@ class AudioSessionEventMessage {
       message,
       receivingAudio,
       callbackCount,
+      peakAmplitude,
+      rms,
+      nonZeroFramePercent,
+      renderCycles,
+      firstAudioAtMillis,
     ];
   }
 
@@ -478,6 +528,11 @@ class AudioSessionEventMessage {
       message: result[3] as String?,
       receivingAudio: result[4] as bool?,
       callbackCount: result[5] as int?,
+      peakAmplitude: result[6] as double?,
+      rms: result[7] as double?,
+      nonZeroFramePercent: result[8] as double?,
+      renderCycles: result[9] as int?,
+      firstAudioAtMillis: result[10] as int?,
     );
   }
 
@@ -490,7 +545,7 @@ class AudioSessionEventMessage {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(sessionId, other.sessionId) && _deepEquals(phase, other.phase) && _deepEquals(code, other.code) && _deepEquals(message, other.message) && _deepEquals(receivingAudio, other.receivingAudio) && _deepEquals(callbackCount, other.callbackCount);
+    return _deepEquals(sessionId, other.sessionId) && _deepEquals(phase, other.phase) && _deepEquals(code, other.code) && _deepEquals(message, other.message) && _deepEquals(receivingAudio, other.receivingAudio) && _deepEquals(callbackCount, other.callbackCount) && _deepEquals(peakAmplitude, other.peakAmplitude) && _deepEquals(rms, other.rms) && _deepEquals(nonZeroFramePercent, other.nonZeroFramePercent) && _deepEquals(renderCycles, other.renderCycles) && _deepEquals(firstAudioAtMillis, other.firstAudioAtMillis);
   }
 
   @override
@@ -499,7 +554,7 @@ class AudioSessionEventMessage {
 
   @override
   String toString() {
-    return 'AudioSessionEventMessage(sessionId: $sessionId, phase: $phase, code: $code, message: $message, receivingAudio: $receivingAudio, callbackCount: $callbackCount)';
+    return 'AudioSessionEventMessage(sessionId: $sessionId, phase: $phase, code: $code, message: $message, receivingAudio: $receivingAudio, callbackCount: $callbackCount, peakAmplitude: $peakAmplitude, rms: $rms, nonZeroFramePercent: $nonZeroFramePercent, renderCycles: $renderCycles, firstAudioAtMillis: $firstAudioAtMillis)';
   }
 }
 
@@ -735,35 +790,41 @@ class _PigeonCodec extends StandardMessageCodec {
     }    else if (value is AudioSessionPhaseMessage) {
       buffer.putUint8(131);
       writeValue(buffer, value.index);
-    }    else if (value is PcmFormatMessage) {
+    }    else if (value is DiscontinuityReasonMessage) {
       buffer.putUint8(132);
-      writeValue(buffer, value.encode());
-    }    else if (value is CaptureRequestMessage) {
+      writeValue(buffer, value.index);
+    }    else if (value is MicrophonePermissionStatusMessage) {
       buffer.putUint8(133);
-      writeValue(buffer, value.encode());
-    }    else if (value is CaptureSessionInfoMessage) {
+      writeValue(buffer, value.index);
+    }    else if (value is PcmFormatMessage) {
       buffer.putUint8(134);
       writeValue(buffer, value.encode());
-    }    else if (value is AudioFrameMessage) {
+    }    else if (value is CaptureRequestMessage) {
       buffer.putUint8(135);
       writeValue(buffer, value.encode());
-    }    else if (value is AudioFrameBatchMessage) {
+    }    else if (value is CaptureSessionInfoMessage) {
       buffer.putUint8(136);
       writeValue(buffer, value.encode());
-    }    else if (value is AudioSessionEventMessage) {
+    }    else if (value is AudioFrameMessage) {
       buffer.putUint8(137);
       writeValue(buffer, value.encode());
-    }    else if (value is AudioProcessMessage) {
+    }    else if (value is AudioFrameBatchMessage) {
       buffer.putUint8(138);
       writeValue(buffer, value.encode());
-    }    else if (value is AudioInputDeviceMessage) {
+    }    else if (value is AudioSessionEventMessage) {
       buffer.putUint8(139);
       writeValue(buffer, value.encode());
-    }    else if (value is PlaybackRequestMessage) {
+    }    else if (value is AudioProcessMessage) {
       buffer.putUint8(140);
       writeValue(buffer, value.encode());
-    }    else if (value is PlaybackSessionInfoMessage) {
+    }    else if (value is AudioInputDeviceMessage) {
       buffer.putUint8(141);
+      writeValue(buffer, value.encode());
+    }    else if (value is PlaybackRequestMessage) {
+      buffer.putUint8(142);
+      writeValue(buffer, value.encode());
+    }    else if (value is PlaybackSessionInfoMessage) {
+      buffer.putUint8(143);
       writeValue(buffer, value.encode());
     } else {
       super.writeValue(buffer, value);
@@ -783,24 +844,30 @@ class _PigeonCodec extends StandardMessageCodec {
         final value = readValue(buffer) as int?;
         return value == null ? null : AudioSessionPhaseMessage.values[value];
       case 132:
-        return PcmFormatMessage.decode(readValue(buffer)!);
+        final value = readValue(buffer) as int?;
+        return value == null ? null : DiscontinuityReasonMessage.values[value];
       case 133:
-        return CaptureRequestMessage.decode(readValue(buffer)!);
+        final value = readValue(buffer) as int?;
+        return value == null ? null : MicrophonePermissionStatusMessage.values[value];
       case 134:
-        return CaptureSessionInfoMessage.decode(readValue(buffer)!);
+        return PcmFormatMessage.decode(readValue(buffer)!);
       case 135:
-        return AudioFrameMessage.decode(readValue(buffer)!);
+        return CaptureRequestMessage.decode(readValue(buffer)!);
       case 136:
-        return AudioFrameBatchMessage.decode(readValue(buffer)!);
+        return CaptureSessionInfoMessage.decode(readValue(buffer)!);
       case 137:
-        return AudioSessionEventMessage.decode(readValue(buffer)!);
+        return AudioFrameMessage.decode(readValue(buffer)!);
       case 138:
-        return AudioProcessMessage.decode(readValue(buffer)!);
+        return AudioFrameBatchMessage.decode(readValue(buffer)!);
       case 139:
-        return AudioInputDeviceMessage.decode(readValue(buffer)!);
+        return AudioSessionEventMessage.decode(readValue(buffer)!);
       case 140:
-        return PlaybackRequestMessage.decode(readValue(buffer)!);
+        return AudioProcessMessage.decode(readValue(buffer)!);
       case 141:
+        return AudioInputDeviceMessage.decode(readValue(buffer)!);
+      case 142:
+        return PlaybackRequestMessage.decode(readValue(buffer)!);
+      case 143:
         return PlaybackSessionInfoMessage.decode(readValue(buffer)!);
       default:
         return super.readValueOfType(type, buffer);
@@ -969,6 +1036,63 @@ class DarwinAudioHostApi {
     )
     ;
     return pigeonVar_replyValue! as bool;
+  }
+
+  Future<MicrophonePermissionStatusMessage> microphonePermissionStatus() async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.microphonePermissionStatus$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channel = BasicMessageChannel<Object?>(
+      pigeonVar_channelName,
+      pigeonChannelCodec,
+      binaryMessenger: pigeonVar_binaryMessenger,
+    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
+    final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
+
+    final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
+    return pigeonVar_replyValue! as MicrophonePermissionStatusMessage;
+  }
+
+  Future<MicrophonePermissionStatusMessage> requestMicrophonePermission() async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.requestMicrophonePermission$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channel = BasicMessageChannel<Object?>(
+      pigeonVar_channelName,
+      pigeonChannelCodec,
+      binaryMessenger: pigeonVar_binaryMessenger,
+    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
+    final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
+
+    final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
+    return pigeonVar_replyValue! as MicrophonePermissionStatusMessage;
+  }
+
+  Future<int> cleanupOrphanedAggregateDevices() async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.cleanupOrphanedAggregateDevices$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channel = BasicMessageChannel<Object?>(
+      pigeonVar_channelName,
+      pigeonChannelCodec,
+      binaryMessenger: pigeonVar_binaryMessenger,
+    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(null);
+    final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
+
+    final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
+    return pigeonVar_replyValue! as int;
   }
 
   Future<List<AudioInputDeviceMessage>> listAudioInputDevices() async {

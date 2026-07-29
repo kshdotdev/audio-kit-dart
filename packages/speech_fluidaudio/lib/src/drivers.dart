@@ -311,6 +311,30 @@ abstract interface class FluidItnDriver {
   Future<void> close();
 }
 
+/// Native driver whose normalization takes a whole transcript, not a sentence.
+///
+/// A refinement of [FluidItnDriver] rather than a member on it, mirroring how
+/// `speech_core` refines `InverseTextNormalizer` into
+/// `TranscriptInverseTextNormalizer`: a runtime that can only rewrite strings
+/// stays a valid [FluidItnDriver], and the provider tests for the stronger
+/// contract with `is` instead of carrying a capability flag.
+abstract interface class FluidTranscriptItnDriver implements FluidItnDriver {
+  /// Normalizes [text] in one native pass with its [timings] attached.
+  ///
+  /// The timings are an input, not an output. FluidAudio rewrites spans inside
+  /// the text — `twenty five dollars` becomes `$25` — and leaves the timeline
+  /// alone, so the timed words the caller already holds remain the truthful
+  /// ones; they also carry detail this seam drops, an absent confidence and a
+  /// speaker label. Returning only the written-form text is what makes it
+  /// structurally impossible for this path to hand back a guessed timestamp.
+  ///
+  /// Returns [text] unchanged when normalization is a no-op.
+  Future<String> normalizeTranscript({
+    required String text,
+    required List<FluidDriverTokenTiming> timings,
+  });
+}
+
 /// Injectable boundary between provider-neutral sessions and FluidAudio.
 abstract interface class FluidAudioRuntime {
   /// Creates and loads a streaming recognizer.

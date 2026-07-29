@@ -17,5 +17,10 @@ registry.register(provider);
 Streaming STT, VAD, and EOU sessions are audio sinks. TTS is an `AudioSource`,
 so synthesized PCM can branch to playback, recording, metering, or analysis.
 
+`TurnCompletionScorer` scores a finite window for whether the speaker actually
+finished, which silence alone cannot tell you, and
+`TranscriptInverseTextNormalizer` rewrites a transcript to written form without
+discarding its word timings.
+
 Available adapters in this repository include FluidAudio, MLX Audio, Deepgram,
 and OpenAI TTS.

@@ -203,7 +203,7 @@ void main() {
       addTearDown(provider.close);
 
       await provider.transcribe(
-        BatchRecognitionRequest(audio: FakeAudioSource(tone(1600))),
+        BatchRecognitionRequest(audio: FakeAudioSource(tone(16000))),
       );
 
       final configuration = runtime.asrConfigurations.single;
@@ -223,7 +223,7 @@ void main() {
 
       await provider.transcribe(
         BatchRecognitionRequest(
-          audio: FakeAudioSource(tone(1600)),
+          audio: FakeAudioSource(tone(16000)),
           options: SpeechRecognitionOptions(
             modelId: SherpaRecognitionModel.whisperBaseEn.id,
             languageTag: 'en-US',
@@ -247,7 +247,7 @@ void main() {
 
       await provider.transcribe(
         BatchRecognitionRequest(
-          audio: FakeAudioSource(tone(1600)),
+          audio: FakeAudioSource(tone(16000)),
           options: SpeechRecognitionOptions(
             providerOptions: SherpaRecognitionOptions(
               numThreads: 2,
@@ -270,7 +270,7 @@ void main() {
       await expectLater(
         provider.transcribe(
           BatchRecognitionRequest(
-            audio: FakeAudioSource(tone(1600)),
+            audio: FakeAudioSource(tone(16000)),
             options: SpeechRecognitionOptions(
               providerOptions: _ForeignOptions(),
             ),
@@ -292,10 +292,10 @@ void main() {
       addTearDown(provider.close);
 
       await provider.transcribe(
-        BatchRecognitionRequest(audio: FakeAudioSource(tone(1600))),
+        BatchRecognitionRequest(audio: FakeAudioSource(tone(16000))),
       );
       await provider.transcribe(
-        BatchRecognitionRequest(audio: FakeAudioSource(tone(1600))),
+        BatchRecognitionRequest(audio: FakeAudioSource(tone(16000))),
       );
 
       expect(runtime.asrConfigurations, hasLength(1));
@@ -308,11 +308,11 @@ void main() {
       addTearDown(provider.close);
 
       await provider.transcribe(
-        BatchRecognitionRequest(audio: FakeAudioSource(tone(1600))),
+        BatchRecognitionRequest(audio: FakeAudioSource(tone(16000))),
       );
       await provider.transcribe(
         BatchRecognitionRequest(
-          audio: FakeAudioSource(tone(1600)),
+          audio: FakeAudioSource(tone(16000)),
           options: SpeechRecognitionOptions(
             modelId: SherpaRecognitionModel.whisperBaseEn.id,
           ),
@@ -333,29 +333,74 @@ void main() {
         addTearDown(provider.close);
 
         await provider.transcribe(
-          BatchRecognitionRequest(audio: FakeAudioSource(tone(1600))),
+          BatchRecognitionRequest(audio: FakeAudioSource(tone(16000))),
         );
         await provider.unloadRecognizer();
         expect(runtime.asrDrivers.single.closed, isTrue);
 
         await provider.transcribe(
-          BatchRecognitionRequest(audio: FakeAudioSource(tone(1600))),
+          BatchRecognitionRequest(audio: FakeAudioSource(tone(16000))),
         );
         expect(runtime.asrConfigurations, hasLength(2));
       },
     );
 
-    test('returns empty text for empty audio without decoding', () async {
+    test('refuses audio shorter than one second without decoding', () async {
       installRecognition(SherpaRecognitionModel.parakeetTdtV3);
       final provider = buildProvider();
       addTearDown(provider.close);
 
-      final result = await provider.transcribe(
-        BatchRecognitionRequest(audio: FakeAudioSource(Float32List(0))),
+      await expectLater(
+        // 15,999 samples: one short of the 16,000 the Swift oracle requires at
+        // 16 kHz.
+        provider.transcribe(
+          BatchRecognitionRequest(audio: FakeAudioSource(tone(15999))),
+        ),
+        throwsA(
+          isA<SpeechFailure>()
+              .having(
+                (f) => f.code,
+                'code',
+                SpeechAudioGuards.audioTooShortCode,
+              )
+              .having((f) => f.providerId, 'providerId', sherpaProviderId),
+        ),
       );
 
-      expect(result.text, isEmpty);
-      expect(result.segments, isEmpty);
+      expect(runtime.asrDrivers.single.received, isEmpty);
+    });
+
+    test('refuses empty audio with the same typed failure', () async {
+      installRecognition(SherpaRecognitionModel.parakeetTdtV3);
+      final provider = buildProvider();
+      addTearDown(provider.close);
+
+      await expectLater(
+        provider.transcribe(
+          BatchRecognitionRequest(audio: FakeAudioSource(Float32List(0))),
+        ),
+        throwsA(
+          isA<SpeechFailure>().having(
+            (f) => f.code,
+            'code',
+            SpeechAudioGuards.audioTooShortCode,
+          ),
+        ),
+      );
+
+      expect(runtime.asrDrivers.single.received, isEmpty);
+    });
+
+    test('accepts audio at exactly the minimum duration', () async {
+      installRecognition(SherpaRecognitionModel.parakeetTdtV3);
+      final provider = buildProvider();
+      addTearDown(provider.close);
+
+      await provider.transcribe(
+        BatchRecognitionRequest(audio: FakeAudioSource(tone(16000))),
+      );
+
+      expect(runtime.asrDrivers.single.received.single, hasLength(16000));
     });
   });
 
@@ -918,7 +963,7 @@ void main() {
       final provider = buildProvider();
 
       await provider.transcribe(
-        BatchRecognitionRequest(audio: FakeAudioSource(tone(1600))),
+        BatchRecognitionRequest(audio: FakeAudioSource(tone(16000))),
       );
       final session = await provider.prepareVoiceActivityDetection(
         VoiceActivityDetectionRequest(

@@ -28,8 +28,18 @@ import os
     private let running = OSAllocatedUnfairLock(initialState: false)
     private let failureScheduled = OSAllocatedUnfairLock(initialState: false)
     private let holdsActivity = OSAllocatedUnfairLock(initialState: false)
+    private let renderCycles = OSAllocatedUnfairLock(initialState: Int64(0))
+    /// Serial queue the HAL delivers default-output-device notifications on.
+    /// Separate from `ioQueue`/`workerQueue`, which a rebuild drains.
+    private let deviceListenerQueue = DispatchQueue(
+      label: "audio_flutter.system_capture.device_listener",
+      qos: .userInitiated
+    )
     private var tapId = AudioObjectID(kAudioObjectUnknown)
     private var aggregateId = AudioObjectID(kAudioObjectUnknown)
+    private var aggregateUid: String?
+    private var clockDeviceUid: String?
+    private var outputDeviceListener: AudioObjectPropertyListenerBlock?
     private var ioProcId: AudioDeviceIOProcID?
     private var assembler: CaptureFrameAssembler
     private var converter: PersistentAudioConverter?
@@ -85,6 +95,7 @@ import os
         unwindLocked()
         throw error
       }
+      installOutputDeviceListenerLocked()
       setActivityHold(true)
       events.emit(
         AudioSessionEventMessage(
@@ -103,11 +114,10 @@ import os
         let currentStatistics = self.assembler.statistics()
         if currentStatistics.nonZeroFrameCount > initialNonZero {
           self.events.emit(
-            AudioSessionEventMessage(
-              sessionId: self.sessionId,
+            self.healthEvent(
               phase: .running,
               receivingAudio: true,
-              callbackCount: currentStatistics.callbackCount
+              statistics: currentStatistics
             )
           )
           return
@@ -116,12 +126,11 @@ import os
         // Electron/Chromium helper processes may become tappable after start.
         // Rebuild once using a fresh PID translation before declaring failure.
         self.events.emit(
-          AudioSessionEventMessage(
-            sessionId: self.sessionId,
+          self.healthEvent(
             phase: .interrupted,
             message: "System capture is silent; rebuilding its process tap once.",
             receivingAudio: false,
-            callbackCount: currentStatistics.callbackCount
+            statistics: currentStatistics
           )
         )
         guard self.rebuild() else { return }
@@ -135,12 +144,11 @@ import os
         let audioAdvanced = finalStatistics.nonZeroFrameCount > rebuiltNonZero
         if callbacksAdvanced {
           self.events.emit(
-            AudioSessionEventMessage(
-              sessionId: self.sessionId,
+            self.healthEvent(
               phase: .running,
               message: audioAdvanced ? nil : "System tap is alive but currently silent.",
               receivingAudio: audioAdvanced,
-              callbackCount: finalStatistics.callbackCount
+              statistics: finalStatistics
             )
           )
         } else {
@@ -152,6 +160,31 @@ import os
           )
         }
       }
+    }
+
+    /// One health event carrying the full statistics snapshot. Built only where
+    /// health is already emitted, so widening the payload does not raise the
+    /// event rate.
+    private func healthEvent(
+      phase: AudioSessionPhaseMessage,
+      code: String? = nil,
+      message: String? = nil,
+      receivingAudio: Bool,
+      statistics: CaptureStatistics
+    ) -> AudioSessionEventMessage {
+      AudioSessionEventMessage(
+        sessionId: sessionId,
+        phase: phase,
+        code: code,
+        message: message,
+        receivingAudio: receivingAudio,
+        callbackCount: statistics.callbackCount,
+        peakAmplitude: statistics.peakAmplitude,
+        rms: statistics.rms,
+        nonZeroFramePercent: statistics.nonZeroFramePercent,
+        renderCycles: renderCycles.withLock { $0 },
+        firstAudioAtMillis: statistics.firstAudioAtMillis
+      )
     }
 
     private func rebuild() -> Bool {
@@ -167,6 +200,7 @@ import os
         running.withLock { $0 = false }
         workRing.finish(discardBuffered: true)
         workerQueue.sync {}
+        removeOutputDeviceListenerLocked()
         recorder?.close()
         recorder = nil
         setActivityHold(false)
@@ -235,9 +269,11 @@ import os
       // device is a clock source only; the tap still carries the whole-system
       // mix regardless of output routing.
       let clockDeviceUid = Self.defaultOutputDeviceUid()
+      let uid = Self.aggregateUidPrefix + UUID().uuidString
       var aggregate = AudioObjectID(kAudioObjectUnknown)
       status = AudioHardwareCreateAggregateDevice(
         Self.aggregateDescription(
+          aggregateUid: uid,
           tapUid: description.uuid.uuidString,
           clockDeviceUid: clockDeviceUid
         ) as CFDictionary,
@@ -248,6 +284,7 @@ import os
         // retry as the unclocked tap-only aggregate.
         status = AudioHardwareCreateAggregateDevice(
           Self.aggregateDescription(
+            aggregateUid: uid,
             tapUid: description.uuid.uuidString,
             clockDeviceUid: nil
           ) as CFDictionary,
@@ -263,6 +300,11 @@ import os
         )
       }
       aggregateId = aggregate
+      aggregateUid = uid
+      self.clockDeviceUid = clockDeviceUid
+      // Registered before any failure path can run, so the orphan sweeper never
+      // destroys a device this process is still building on.
+      Self.liveAggregateUids.withLock { _ = $0.insert(uid) }
 
       guard let inputFormat = Self.tapFormat(tapId) else {
         unwindLocked()
@@ -298,6 +340,7 @@ import os
         ioQueue
       ) { [weak self] now, inputData, inputTime, _, _ in
         guard let self, self.running.withLock({ $0 }) else { return }
+        self.renderCycles.withLock { $0 += 1 }
         guard
           let buffer = AVAudioPCMBuffer(
             pcmFormat: inputFormat,
@@ -351,6 +394,7 @@ import os
       if wasRunning {
         watchdog?.cancel()
         watchdog = nil
+        removeOutputDeviceListenerLocked()
         teardownChainLocked(
           discardPendingWork: discardBuffered,
           finishWork: true
@@ -430,10 +474,94 @@ import os
         AudioHardwareDestroyAggregateDevice(aggregateId)
         aggregateId = AudioObjectID(kAudioObjectUnknown)
       }
+      if let uid = aggregateUid {
+        Self.liveAggregateUids.withLock { _ = $0.remove(uid) }
+        aggregateUid = nil
+      }
+      clockDeviceUid = nil
       if tapId != AudioObjectID(kAudioObjectUnknown) {
         AudioHardwareDestroyProcessTap(tapId)
         tapId = AudioObjectID(kAudioObjectUnknown)
       }
+    }
+
+    /// Watches the default output device the aggregate is clocked from.
+    ///
+    /// The aggregate anchors to whichever device was default when the chain was
+    /// built, so switching output (speakers to AirPods, HDMI unplugged) leaves
+    /// it clocked by a device the user no longer routes to — and by a device
+    /// that may vanish outright, which stops the IO proc silently. The listener
+    /// rebuilds the chain against the new default; the rebuild reports itself
+    /// through the frame stream as an `AudioDiscontinuityReason.sourceRestart`.
+    private func installOutputDeviceListenerLocked() {
+      guard outputDeviceListener == nil else { return }
+      var address = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+      )
+      let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+        self?.handleDefaultOutputDeviceChange()
+      }
+      let status = AudioObjectAddPropertyListenerBlock(
+        AudioObjectID(kAudioObjectSystemObject),
+        &address,
+        deviceListenerQueue,
+        block
+      )
+      guard status == noErr else { return }
+      outputDeviceListener = block
+    }
+
+    private func removeOutputDeviceListenerLocked() {
+      guard let block = outputDeviceListener else { return }
+      var address = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+      )
+      AudioObjectRemovePropertyListenerBlock(
+        AudioObjectID(kAudioObjectSystemObject),
+        &address,
+        deviceListenerQueue,
+        block
+      )
+      outputDeviceListener = nil
+    }
+
+    /// Runs on `deviceListenerQueue` and returns immediately: teardown removes
+    /// this listener while it holds `lifecycle`, so a listener block that
+    /// waited for `lifecycle` could deadlock against its own removal.
+    private func handleDefaultOutputDeviceChange() {
+      guard running.withLock({ $0 }) else { return }
+      DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        self?.rebuildForOutputDeviceChange()
+      }
+    }
+
+    /// A tap-only aggregate (no clock device) is unaffected by the switch, and
+    /// a notification that resolves to the same device is a no-op, so neither
+    /// rebuilds.
+    private func rebuildForOutputDeviceChange() {
+      guard running.withLock({ $0 }) else { return }
+      lifecycle.lock()
+      let previousUid = clockDeviceUid
+      lifecycle.unlock()
+      guard let previousUid else { return }
+      let currentUid = Self.defaultOutputDeviceUid()
+      guard currentUid != previousUid else { return }
+      events.emit(
+        healthEvent(
+          phase: .interrupted,
+          code: "DefaultOutputDeviceChanged",
+          message:
+            "The default output device changed; rebuilding the capture chain "
+            + "against the new clock device.",
+          receivingAudio: false,
+          statistics: assembler.statistics()
+        )
+      )
+      _ = rebuild()
     }
 
     /// Holds the process-wide App Nap assertion while this session captures.
@@ -581,18 +709,35 @@ import os
       return AVAudioFormat(streamDescription: &description)
     }
 
+    /// UID prefix of every aggregate device this plugin creates.
+    ///
+    /// The name stays human-readable for anything that shows device names; the
+    /// UID is what `cleanupOrphanedAggregateDevices()` matches on, so it must
+    /// be unmistakably ours and must never change casually — a released build
+    /// that used the old prefix leaks devices this one would no longer
+    /// recognise.
+    static let aggregateUidPrefix = "audio-flutter.tap."
+
+    /// UIDs of aggregates a live session in this process still owns. The
+    /// orphan sweeper skips them; everything else carrying the prefix was
+    /// leaked by a process that died before it could unwind.
+    private static let liveAggregateUids = OSAllocatedUnfairLock(
+      initialState: Set<String>()
+    )
+
     /// The private aggregate device that exposes the tap as an input stream.
     ///
     /// `clockDeviceUid` anchors the aggregate to real output hardware; `nil`
     /// builds the tap-only aggregate, which has no clock source of its own.
     static func aggregateDescription(
+      aggregateUid: String,
       tapUid: String,
       clockDeviceUid: String?
     ) -> [String: Any] {
       var tap: [String: Any] = [kAudioSubTapUIDKey as String: tapUid]
       var description: [String: Any] = [
         kAudioAggregateDeviceNameKey as String: "audio_flutter aggregate",
-        kAudioAggregateDeviceUIDKey as String: UUID().uuidString,
+        kAudioAggregateDeviceUIDKey as String: aggregateUid,
         kAudioAggregateDeviceIsPrivateKey as String: true,
         kAudioAggregateDeviceTapAutoStartKey as String: true,
       ]
@@ -640,26 +785,86 @@ import os
         ) == noErr,
         device != AudioDeviceID(kAudioObjectUnknown)
       else { return nil }
+      return deviceUid(device)
+    }
 
-      var uidAddress = AudioObjectPropertyAddress(
+    static func deviceUid(_ device: AudioDeviceID) -> String? {
+      var address = AudioObjectPropertyAddress(
         mSelector: kAudioDevicePropertyDeviceUID,
         mScope: kAudioObjectPropertyScopeGlobal,
         mElement: kAudioObjectPropertyElementMain
       )
       var value: Unmanaged<CFString>?
-      var uidSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+      var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
       guard
         AudioObjectGetPropertyData(
           device,
-          &uidAddress,
+          &address,
           0,
           nil,
-          &uidSize,
+          &size,
           &value
         ) == noErr,
         let value
       else { return nil }
       return value.takeRetainedValue() as String
+    }
+
+    /// Destroys aggregate devices this plugin created and never unwound,
+    /// returning how many were reclaimed.
+    ///
+    /// macOS reclaims a private aggregate when its creating process exits
+    /// cleanly, but a `kill -9`, a crash, or a debugger stop can leave it in
+    /// the device tree. Only devices whose UID carries
+    /// `aggregateUidPrefix` are touched, and never one a live session in this
+    /// process still owns, so this is safe to call at app start — which is the
+    /// point of calling it: an app that never calls it accumulates leaked
+    /// devices across crashes.
+    static func cleanupOrphanedAggregateDevices() -> Int64 {
+      let live = liveAggregateUids.withLock { $0 }
+      var address = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDevices,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+      )
+      var size: UInt32 = 0
+      guard
+        AudioObjectGetPropertyDataSize(
+          AudioObjectID(kAudioObjectSystemObject),
+          &address,
+          0,
+          nil,
+          &size
+        ) == noErr,
+        size > 0
+      else { return 0 }
+      var devices = [AudioDeviceID](
+        repeating: AudioDeviceID(kAudioObjectUnknown),
+        count: Int(size) / MemoryLayout<AudioDeviceID>.size
+      )
+      guard
+        AudioObjectGetPropertyData(
+          AudioObjectID(kAudioObjectSystemObject),
+          &address,
+          0,
+          nil,
+          &size,
+          &devices
+        ) == noErr
+      else { return 0 }
+
+      var destroyed: Int64 = 0
+      for device in devices {
+        guard
+          let uid = deviceUid(device),
+          uid.hasPrefix(aggregateUidPrefix),
+          !live.contains(uid)
+        else { continue }
+        if AudioHardwareDestroyAggregateDevice(device) == noErr {
+          destroyed += 1
+        }
+      }
+      return destroyed
     }
 
     static func listProcesses() -> [AudioProcessMessage] {

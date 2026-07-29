@@ -29,6 +29,7 @@ final class MicrophoneCaptureSession: NativeCaptureSession {
   #if os(macOS)
     private let holdsActivity = OSAllocatedUnfairLock(initialState: false)
   #endif
+  private let renderCycles = OSAllocatedUnfairLock(initialState: Int64(0))
   private var assembler: CaptureFrameAssembler?
   private var converter: PersistentAudioConverter?
   private var recorder: RawAudioRecorder?
@@ -130,6 +131,7 @@ final class MicrophoneCaptureSession: NativeCaptureSession {
     input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) {
       [weak self] buffer, time in
       guard let self, self.running.withLock({ $0 }) else { return }
+      self.renderCycles.withLock { $0 += 1 }
       guard let copy = AudioBufferCopy.copy(buffer) else { return }
       let timestampMicros =
         time.isHostTimeValid
@@ -178,7 +180,12 @@ final class MicrophoneCaptureSession: NativeCaptureSession {
             ? nil
             : "Microphone is active but has not produced non-zero audio",
           receivingAudio: statistics.nonZeroFrameCount > 0,
-          callbackCount: statistics.callbackCount
+          callbackCount: statistics.callbackCount,
+          peakAmplitude: statistics.peakAmplitude,
+          rms: statistics.rms,
+          nonZeroFramePercent: statistics.nonZeroFramePercent,
+          renderCycles: self.renderCycles.withLock { $0 },
+          firstAudioAtMillis: statistics.firstAudioAtMillis
         )
       )
     }

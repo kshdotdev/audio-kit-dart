@@ -20,6 +20,13 @@ enum SpeechCapability {
   /// Converts spoken-form text to written form, such as `twenty five dollars`
   /// to `$25`.
   inverseTextNormalization,
+
+  /// Scores whether a window of speech ended a conversational turn.
+  ///
+  /// Distinct from [endOfUtterance], which reports that speech stopped: this
+  /// answers whether the speaker was *finished*, which is the difference
+  /// between waiting through a mid-sentence pause and interrupting.
+  turnCompletion,
 }
 
 /// Metadata for a provider-neutral speech model.

@@ -25,6 +25,26 @@ final class MlxRecognitionOptions implements SpeechProviderOptions {
   final int repetitionContextSize;
 }
 
+/// MLX turn-completion controls.
+///
+/// Deliberately thin: the Smart Turn checkpoint is pinned by revision and hash,
+/// its window policy is fixed by training, and the decision threshold already
+/// has a first-class home on `TurnCompletionRequest.threshold`. What is left is
+/// model routing, so an application holding several MLX providers can assert it
+/// reached the one it meant to.
+final class MlxSmartTurnOptions implements SpeechProviderOptions {
+  const MlxSmartTurnOptions({this.modelId});
+
+  @override
+  String get providerId => mlxSpeechProviderId;
+
+  /// Model the request must be routed to; null accepts the scorer's own.
+  ///
+  /// A mismatch fails with `unknown_model` rather than silently scoring on
+  /// whichever checkpoint happens to be loaded.
+  final String? modelId;
+}
+
 /// MLX synthesis controls without leaking `mlx_audio` parameter types.
 final class MlxSynthesisOptions implements SpeechProviderOptions {
   const MlxSynthesisOptions({

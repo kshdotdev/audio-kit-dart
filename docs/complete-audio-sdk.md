@@ -1,5 +1,7 @@
 # The Complete Audio SDK — Control Center parity analysis and roadmap
 
+*Errata: this document is a historical analysis, preserved as written. The intelligence packages it proposes and places under `packages/` — `speech_pipeline`, `turn_detection`, `transcript_kit`, `meeting_kit`, and `conversation_core` — were built and then split out into the sibling [conversation-kit-dart](https://github.com/kshdotdev/conversation-kit-dart) repository. Package paths and tier groupings below still describe the single-repo layout that existed at the time of writing.*
+
 > Produced 2026-07-28 by a multi-agent analysis (three exploration agents, one design agent, five section authors, two verification agents) over five repos. Section-level claims are cited to source; see the reading guide below for conventions.
 
 ## Executive summary
@@ -59,9 +61,9 @@ Citations use `TAG://relative/path:lines`, where `lines` is a single line (`:229
 
 | Tag | Repo | Location |
 |---|---|---|
-| `AK://` | audio-kit-dart (this repo) | `/Users/kauan/Projects/my/audio-kit-dart` |
-| `FA://` | fluidaudio_dart 0.3.1 | `/Users/kauan/Projects/my/fluidaudio-dart` |
-| `MLX://` | mlx / mlx_audio | `/Users/kauan/Projects/my/mlx-audio` |
+| `AK://` | audio-kit-dart (this repo) | `/Users/kauan/Projects/kshdotdev/audio-kit-dart` |
+| `FA://` | fluidaudio_dart 0.3.1 | `/Users/kauan/Projects/kshdotdev/fluidaudio-dart` |
+| `MLX://` | mlx / mlx_audio | `/Users/kauan/Projects/kshdotdev/mlx` |
 | `CC://` | Control Center (reference) | `/Users/kauan/Projects/ectos/references/control-center` |
 | `E://` | ectos app (consumer) | `/Users/kauan/Projects/kshdotdev/flutter-app` |
 

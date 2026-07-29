@@ -66,3 +66,42 @@ Use `SerializedMlxBatchWorker` and `SerializedMlxTtsWorker` for deterministic
 tests or embedding-specific workers. They serialize calls but do not move work
 off the calling isolate. Their close timeout makes cleanup deterministic even
 when an injected callback violates the cooperative-cancellation contract.
+
+## Turn completion
+
+`MlxSmartTurnScorer` implements `TurnCompletionScorer` over the pinned Smart
+Turn v3.2 classifier: given the audio leading up to a pause, it answers whether
+the speaker was *finished*, which is the question a silence timeout cannot ask.
+
+```dart
+final scorer = MlxSmartTurnScorer(worker: MlxIsolateTurnWorker());
+
+try {
+  final score = await scorer.scoreTurnCompletion(
+    // A ring-buffer slice ending at the pause. Trailing silence belongs in it.
+    TurnCompletionRequest.fromSamples(window),
+  );
+  if (score.isComplete) endTurn(score.probability);
+} finally {
+  await scorer.close();
+}
+```
+
+It is a separate provider from `MlxSpeechProvider` on purpose: the two own
+different checkpoints with different lifecycles, and a detector usually wants
+the turn model resident long before any transcription runs. It advertises only
+`SpeechCapability.turnCompletion`, under the same stable `mlx` provider ID.
+
+`MlxIsolateTurnWorker` takes no model path — Smart Turn is pinned by revision
+and per-file SHA-256 inside `mlx_audio`, so the only knob is `modelDirectory`
+for an already-materialized snapshot. Loading caps MLX's buffer cache and warms
+the Metal kernels on silence, so the first real pause sees steady-state latency
+(~5 ms per 8 s window after warmup, vs ~1.8 s cold).
+
+Windows longer than the classifier's 8 s are cropped to their **tail** before
+the isolate hop, and shorter ones are left-padded by the model: the decision is
+about how the audio ended. Windows at another sample rate keep it — resampling
+happens next to the model, with the same polyphase filter `mlx_audio` uses
+elsewhere. Scoring failures raise `SpeechFailure`; the scorer never invents a
+probability to keep a caller running, because a made-up `0.5` is
+indistinguishable from a genuinely uncertain model.
