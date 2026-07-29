@@ -132,14 +132,22 @@ accident. Conversion uses `floatToPcm16` / `pcm16ToFloat` from
 `AecProcessor.create()` resolves a library by trying, in order:
 
 1. An explicit `libraryPath` argument.
-2. The `AUDIO_AEC_LIBRARY` environment variable, naming the library file itself
+2. A **code asset registered by `hook/build.dart`**, when your SDK ran build
+   hooks and the hook had a binary to offer. This one has no path — the SDK
+   copies the library next to your build output and it is addressed by asset id
+   — so it is resolved through `@Native` externals rather than
+   `DynamicLibrary.open`. See [`doc/DISTRIBUTION.md`](doc/DISTRIBUTION.md).
+3. The `AUDIO_AEC_LIBRARY` environment variable, naming the library file itself
    (not a directory).
-3. Conventional locations beside the running executable: the executable's own
+4. Conventional locations beside the running executable: the executable's own
    directory, plus the desktop bundle layout — `../Frameworks` on macOS, `lib/`
    on Linux.
-4. The bare platform file name (`libaec_ffi.dylib`, `libaec_ffi.so`,
+5. The bare platform file name (`libaec_ffi.dylib`, `libaec_ffi.so`,
    `aec_ffi.dll`), letting the operating system's search path resolve it. Note
    that this can also resolve an image the host process has already loaded.
+
+Steps 3–5 are unchanged from before build hooks existed, which is what keeps a
+consumer who ignores hooks entirely on exactly the old behaviour.
 
 When nothing resolves, or a library resolves but is missing a symbol, you get an
 `AecUnavailable` listing every path tried and how to supply one. Nothing
@@ -148,19 +156,47 @@ bundle layout can bypass the policy with `FfiAecBindings.openFrom(candidates)`.
 
 ## Native library (risk R4)
 
-**Binary distribution is unresolved.** A published pub.dev package cannot use
-the reference implementation's approach — out-of-band build scripts writing
-dylibs into an application-support directory — and none of the alternatives is
-settled:
+**Decided: build hooks, with prebuilt binaries fetched and hash-pinned.** The
+full decision matrix, what was measured and on which SDK, the macOS signing
+findings, and the migration steps are in
+[`doc/DISTRIBUTION.md`](doc/DISTRIBUTION.md).
 
-| Option | Cost | Open question |
-|---|---|---|
-| `hook/build.dart` native assets | cleanest consumer story | publishing support and stability |
-| ffiPlugin building from source | imposes meson and a C++ toolchain on every consumer | the thing the reference implementation's own pubspec argues against |
-| Checked-in prebuilt binaries | repo bloat | macOS signing and notarization of a bundled dylib |
+`hook/build.dart` supplies the library automatically when it can. Build hooks
+are stable and unflagged on Dart 3.10+ / Flutter 3.38+, and the path was
+verified end to end on Dart 3.12.0 and Flutter 3.44.0 stable under `dart test`,
+`dart run`, `dart build cli` and `flutter build macos`.
 
-Until that is decided, **this package requires a caller-supplied library** and
-ships only a build script.
+Two things to know before depending on this package:
+
+- **No binaries are published yet.** `pinnedSha256` in
+  `hook/prebuilt_manifest.dart` is empty, so the hook produces nothing unless
+  you configure it (below). Until the first release, this package still
+  requires a caller-supplied library, exactly as before.
+- **`dart compile exe` will refuse to build.** It does not support build hooks,
+  and the restriction is transitive — it applies to anything depending on
+  `audio_aec`, however indirectly. Use `dart build cli --target <entrypoint>`
+  instead. This is the one real cost of the decision.
+
+Point the hook at a library you built with
+[`tool/build_native.sh`](tool/build_native.sh) by adding this to your
+**workspace-root** `pubspec.yaml` (a hook cannot read environment variables —
+it runs in a semi-hermetic environment where they are stripped):
+
+```yaml
+hooks:
+  user_defines:
+    audio_aec:
+      prebuilt: path/to/libaec_ffi.dylib
+      # or: fetch and verify
+      # prebuilt_url: https://example.com/aec_ffi-macos-arm64.dylib
+      # prebuilt_sha256: "91b73004..."   # quote it; YAML types digits as ints
+      # or: build it here, if you have meson
+      # from_source: true
+```
+
+The hook is **additive and never fails a build**. When it has nothing to offer
+it prints a diagnostic and registers no asset, and the runtime loader below
+behaves exactly as it did before hooks existed.
 
 ### Building one
 
@@ -180,15 +216,29 @@ arm64 path is exercised and produces a self-contained ~2.2 MB dylib depending
 only on system frameworks. The Linux path is carried over from the reference
 implementation unchanged and is untested here. Windows is not covered.
 
-The script ad-hoc signs the result so it loads locally. That is not distribution
-signing — a redistributed macOS dylib needs a Developer ID identity and
-notarization, which is one of the open R4 questions above.
+The script links with `-headerpad_max_install_names`, which is **required**, not
+cosmetic: the SDK rewrites a code asset's install name to an absolute path, and
+the default Mach-O header padding cannot hold one. Without it the consumer's
+build fails with `larger updated load commands do not fit`.
+
+It also ad-hoc signs the result. That is deliberate and is the right thing to
+redistribute — a consumer's own toolchain re-signs the library with their
+identity (Flutter wraps it in a framework and re-signs it outright), and a
+dylib carrying *our* Developer ID inside *their* app would fail library
+validation against their Team ID. Release notarization is the one macOS
+question still open; see [`doc/DISTRIBUTION.md`](doc/DISTRIBUTION.md).
 
 ### Testing without one
 
 The whole stack above `AecBindings` is exercised with an in-Dart fake, so the
 test suite needs no native library. One smoke test calls `aec_version` against a
 real library and skips when none is present.
+
+`example/` is the consumer-side counterpart: it asserts `AUDIO_AEC_LIBRARY` is
+unset and then resolves the library purely through the build hook, which is the
+only thing that proves the distribution path rather than the loader.
+`tool/verify_hook.sh` exercises the download-and-verify path, including a
+deliberate hash mismatch.
 
 ## Attribution
 

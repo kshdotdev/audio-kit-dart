@@ -24,3 +24,4 @@ workspace:
   - packages/meeting_kit
   - packages/speech_deepgram
   - packages/speech_openai_tts
+  - packages/audio_flutter/example

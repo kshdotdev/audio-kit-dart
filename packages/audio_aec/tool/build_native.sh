@@ -129,11 +129,18 @@ while IFS= read -r a; do
 done < <(find "$SRC/build" -name '*.a')
 
 if [ "$NATIVE_OS" = "Darwin" ]; then
+  # -headerpad_max_install_names is REQUIRED, not cosmetic. A build hook hands
+  # this dylib to the SDK as a code asset; the SDK then copies it next to the
+  # consumer's output and rewrites LC_ID_DYLIB to that absolute path with
+  # install_name_tool. The default header pad (56 bytes here) cannot hold a real
+  # absolute path, and the rewrite fails hard with "larger updated load commands
+  # do not fit (the program must be relinked)". See doc/DISTRIBUTION.md.
   log "Linking $LIB (force_load APM + ${#OTHER_ARCHIVES[@]} dep/abseil archives + CoreFoundation/Foundation)"
   "$CXX" -dynamiclib -o "$WORK/$LIB" "$WORK/aec_ffi.o" \
     -Wl,-force_load,"$MAIN_AR" \
     "${OTHER_ARCHIVES[@]}" \
     -framework CoreFoundation -framework Foundation \
+    -Wl,-headerpad_max_install_names \
     -install_name "@rpath/$LIB"
 else
   # GNU ld: --whole-archive is the force_load equivalent and is order-sensitive,

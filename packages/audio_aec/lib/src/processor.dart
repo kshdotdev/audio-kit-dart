@@ -23,6 +23,7 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 
 import 'bindings.dart';
+import 'native_asset_bindings.dart';
 
 /// AEC3 echo metrics. Every field is `null` until AEC3 has a value.
 final class AecMetrics {
@@ -133,19 +134,41 @@ final class AecProcessor implements AecEngine {
 
   /// Loads the native library and creates an instance.
   ///
-  /// [libraryPath] short-circuits the resolution order documented on
-  /// [aecLibraryCandidates]. Throws [AecUnavailable] when the library cannot be
-  /// resolved or loaded, or when the engine refuses the requested format. There
-  /// is no degraded mode; see the class documentation.
+  /// Resolution is, in order:
+  ///
+  /// 1. [libraryPath], when supplied — an explicit choice is never
+  ///    second-guessed, and short-circuits everything below.
+  /// 2. A code asset registered by this package's `hook/build.dart`, when the
+  ///    consumer's SDK ran build hooks and the hook had a binary to offer.
+  /// 3. The [aecLibraryCandidates] path policy: `AUDIO_AEC_LIBRARY`, then
+  ///    conventional locations, then the bare file name.
+  ///
+  /// The hook sits *below* an explicit path and *above* the environment
+  /// variable on purpose. It is the only candidate the consumer did not have to
+  /// arrange by hand, so preferring it makes the packaged path the default; but
+  /// a developer who sets `AUDIO_AEC_LIBRARY` to test a locally built library
+  /// against a hook-supplied one is doing something deliberate, so
+  /// [libraryPath] remains the way to force that. Step 3 is unchanged from
+  /// before build hooks existed, which is what keeps a consumer who ignores
+  /// hooks entirely on exactly today's behaviour.
+  ///
+  /// Throws [AecUnavailable] when nothing resolves, or when the engine refuses
+  /// the requested format. There is no degraded mode; see the class
+  /// documentation.
   factory AecProcessor.create({
     String? libraryPath,
     int sampleRate = 16000,
     int channels = 1,
-  }) => AecProcessor.fromBindings(
-    FfiAecBindings.open(libraryPath: libraryPath),
-    sampleRate: sampleRate,
-    channels: channels,
-  );
+  }) {
+    final AecBindings bindings =
+        (libraryPath == null ? NativeAssetAecBindings.tryResolve() : null) ??
+        FfiAecBindings.open(libraryPath: libraryPath);
+    return AecProcessor.fromBindings(
+      bindings,
+      sampleRate: sampleRate,
+      channels: channels,
+    );
+  }
 
   /// Creates an instance over already-resolved [bindings].
   ///

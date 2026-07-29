@@ -17,6 +17,16 @@ dependencies:
   audio_core: ^0.1.0
   audio_processing: ^0.1.0
   ffi: ^2.1.0
+  # The three below exist for `hook/build.dart` and are unused by `lib/`. They
+  # must be regular dependencies, not dev_dependencies: the hook is run by
+  # whoever depends on this package, and dev_dependencies do not reach them.
+  code_assets: ^1.2.1
+  crypto: ^3.0.6
+  # NOT ^2.1.0: hooks 2.1.0 requires meta ^1.19.0, and Flutter 3.44.0's bundled
+  # flutter_test pins meta to 1.18.0, so 2.1.0 is unresolvable in any workspace
+  # containing a Flutter package. ^2.0.0 lets the solver settle on 2.0.2
+  # (meta ^1.16.0) there and take 2.1.0 in a pure-Dart consumer.
+  hooks: ^2.0.0
 
 dev_dependencies:
   test: ^1.26.3

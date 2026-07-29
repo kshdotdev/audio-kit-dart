@@ -16,4 +16,5 @@ library;
 
 export 'src/bindings.dart';
 export 'src/mic_filter.dart';
+export 'src/native_asset_bindings.dart';
 export 'src/processor.dart';
