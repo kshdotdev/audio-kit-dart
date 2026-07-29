@@ -1,7 +1,9 @@
 # audio_flutter
 
 Provider-neutral Flutter microphone capture, system/process capture, device
-discovery, permissions, health events, PCM playback, and native WAV recording.
+discovery, system-audio permission preflight, health events, PCM playback, and
+native WAV recording. (Microphone permission has no request API yet; it is
+granted implicitly via the host app's Info.plist usage description.)
 
 ```dart
 import 'package:audio_core/audio_core.dart';

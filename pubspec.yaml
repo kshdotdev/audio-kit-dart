@@ -16,6 +16,9 @@ workspace:
   - packages/voice_core
   - packages/voice_flutter
   - packages/speech_fluidaudio
+  - packages/speech_sherpa
   - packages/speech_mlx
+  - packages/audio_flutter_linux
+  - packages/audio_aec
   - packages/speech_deepgram
   - packages/speech_openai_tts

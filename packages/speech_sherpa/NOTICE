@@ -1,0 +1,53 @@
+speech_sherpa
+Copyright (c) 2026 Kauan Guesser
+
+This package contains code derived from Control Center
+(https://github.com/SamuelAlev/control-center), used under the MIT License:
+
+    MIT License
+
+    Copyright (c) 2026 Samuel Alev
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+Derived components, with their upstream sources:
+
+  lib/src/native_runtime.dart
+      packages/cc_natives/lib/src/inference/speech/sherpa_onnx_transcriber.dart
+      (long-lived worker isolate owning the recognizer, TransferableTypedData
+       audio transfer, the empty-`modelType` auto-routing workaround, and the
+       per-isolate binding requirement)
+      packages/cc_natives/lib/src/inference/speech/
+      meeting_diarization_service.dart
+      (clustering configuration and the per-speaker embedding audio budget)
+
+  lib/src/models.dart
+      packages/cc_infra/lib/src/speech/voice_model_manager.dart
+      packages/cc_infra/lib/src/speech/diarization_model_manager.dart
+      (model catalog, archive layout, required-file sets, and the upstream
+       release-tag spelling preserved verbatim)
+
+  lib/src/model_registry.dart
+      packages/cc_infra/lib/src/speech/voice_model_manager.dart
+      (install flow: stream to a partial file, extract off the calling isolate,
+       verify by required-file existence, clean up on failure)
+
+This package depends on sherpa-onnx (https://github.com/k2-fsa/sherpa-onnx),
+Apache License 2.0, Copyright (c) k2-fsa. It is consumed as a published
+dependency rather than vendored, so no sherpa-onnx source is redistributed here.

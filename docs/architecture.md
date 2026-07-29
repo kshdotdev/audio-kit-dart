@@ -286,8 +286,8 @@ fan the same synthesized frames into recording, metering, or analysis sinks.
   acoustic echo cancellation is future work.
 - The graph is implemented in Dart. FluidAudio-specific fused native routing
   is deferred until profiling justifies it.
-- Packages are unpublished and use local path dependencies during Ectos
-  migration.
+- All packages are published to pub.dev and consumed hosted by Ectos
+  (no path dependencies).
 
 See [validation](validation.md) for what the default test suite does and does
 not exercise.
