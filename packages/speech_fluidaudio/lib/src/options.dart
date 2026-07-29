@@ -3,6 +3,14 @@ import 'package:speech_core/speech_core.dart';
 /// Stable ID used to register the FluidAudio provider.
 const String fluidAudioProviderId = 'fluidaudio';
 
+/// Stable model ID of FluidAudio's VBx diarizer.
+///
+/// Also names the embedding space of every `SpeakerEmbedding` this adapter
+/// emits, so it must stay stable across releases: changing it invalidates every
+/// stored voice profile, which is the behaviour the space check is there to
+/// make visible.
+const String fluidDiarizationModelId = 'vbx-diarization';
+
 /// Parakeet model generation used by FluidAudio recognition.
 enum FluidRecognitionModel {
   /// English-only Parakeet v2.

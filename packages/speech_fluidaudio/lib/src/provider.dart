@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:audio_core/audio_core.dart';
 import 'package:speech_core/speech_core.dart';
@@ -19,7 +20,8 @@ final class FluidAudioSpeechProvider extends IdempotentSpeechProvider
         VoiceActivityDetectionProvider,
         EndOfUtteranceProvider,
         BatchDiarizationProvider,
-        TextToSpeechProvider {
+        TextToSpeechProvider,
+        CustomizableInverseTextNormalizer {
   /// Creates a provider backed by [runtime].
   ///
   /// Tests and alternative transports can inject an adapter-owned runtime;
@@ -41,6 +43,7 @@ final class FluidAudioSpeechProvider extends IdempotentSpeechProvider
 
   final FluidAudioRuntime _runtime;
   final Set<FluidManagedSession> _sessions = <FluidManagedSession>{};
+  Future<FluidItnDriver>? _itnDriver;
 
   /// Maximum converted 16 kHz mono audio retained for one batch operation.
   final Duration maximumBatchAudioDuration;
@@ -61,7 +64,9 @@ final class FluidAudioSpeechProvider extends IdempotentSpeechProvider
       SpeechCapability.voiceActivityDetection,
       SpeechCapability.endOfUtterance,
       SpeechCapability.diarization,
+      SpeechCapability.speakerEmbedding,
       SpeechCapability.textToSpeech,
+      SpeechCapability.inverseTextNormalization,
     },
     models: <SpeechModelDescriptor>[
       SpeechModelDescriptor(
@@ -102,10 +107,23 @@ final class FluidAudioSpeechProvider extends IdempotentSpeechProvider
         isLocal: true,
       ),
       SpeechModelDescriptor(
-        id: 'vbx-diarization',
+        id: fluidDiarizationModelId,
         providerId: fluidAudioProviderId,
         displayName: 'FluidAudio VBx Diarization',
-        capabilities: const <SpeechCapability>{SpeechCapability.diarization},
+        capabilities: const <SpeechCapability>{
+          SpeechCapability.diarization,
+          SpeechCapability.speakerEmbedding,
+        },
+        isLocal: true,
+      ),
+      SpeechModelDescriptor(
+        id: 'itn',
+        providerId: fluidAudioProviderId,
+        displayName: 'FluidAudio Inverse Text Normalization',
+        capabilities: const <SpeechCapability>{
+          SpeechCapability.inverseTextNormalization,
+        },
+        languageTags: const <String>{'en'},
         isLocal: true,
       ),
       SpeechModelDescriptor(
@@ -457,6 +475,7 @@ final class FluidAudioSpeechProvider extends IdempotentSpeechProvider
                 speakerId: segment.speakerId,
                 range: SpeechTimeRange(start: segment.start, end: segment.end),
                 confidence: _safeProviderConfidence(segment.confidence),
+                embedding: _speakerEmbedding(segment.embedding),
               ),
         ],
       );
@@ -534,6 +553,76 @@ final class FluidAudioSpeechProvider extends IdempotentSpeechProvider
   }
 
   @override
+  Future<String> normalize(String text, {String? languageTag}) async {
+    ensureOpen();
+    _validateNormalizationLanguage(languageTag);
+    if (text.trim().isEmpty) {
+      return text;
+    }
+    final driver = await _inverseTextNormalizer();
+    try {
+      return await driver.normalizeSentence(text);
+    } catch (error) {
+      throw fluidSpeechFailure(
+        'fluid_itn_failed',
+        'normalization',
+        'FluidAudio could not normalize the text.',
+        cause: error,
+      );
+    }
+  }
+
+  @override
+  Future<List<String>> normalizeSentences(
+    Iterable<String> sentences, {
+    String? languageTag,
+  }) async {
+    ensureOpen();
+    _validateNormalizationLanguage(languageTag);
+    final inputs = List<String>.of(sentences);
+    if (inputs.isEmpty) {
+      return const <String>[];
+    }
+    final driver = await _inverseTextNormalizer();
+    final normalized = <String>[];
+    try {
+      for (final sentence in inputs) {
+        // Blank input has no spoken form to rewrite, and skipping it keeps the
+        // one-result-per-input contract without a native round trip.
+        normalized.add(
+          sentence.trim().isEmpty
+              ? sentence
+              : await driver.normalizeSentence(sentence),
+        );
+      }
+    } catch (error) {
+      throw fluidSpeechFailure(
+        'fluid_itn_failed',
+        'normalization',
+        'FluidAudio could not normalize the text.',
+        cause: error,
+      );
+    }
+    return List<String>.unmodifiable(normalized);
+  }
+
+  @override
+  Future<void> addRule(InverseTextNormalizationRule rule) async {
+    ensureOpen();
+    final driver = await _inverseTextNormalizer();
+    try {
+      await driver.addRule(spoken: rule.spoken, written: rule.written);
+    } catch (error) {
+      throw fluidSpeechFailure(
+        'fluid_itn_rule_failed',
+        'normalization',
+        'FluidAudio could not register the normalization rule.',
+        cause: error,
+      );
+    }
+  }
+
+  @override
   Future<void> onClose() async {
     final sessions = List<FluidManagedSession>.of(_sessions);
     Object? firstFailure;
@@ -550,6 +639,16 @@ final class FluidAudioSpeechProvider extends IdempotentSpeechProvider
     } finally {
       _sessions.clear();
     }
+    final pendingItn = _itnDriver;
+    _itnDriver = null;
+    if (pendingItn != null) {
+      try {
+        await (await pendingItn).close();
+      } catch (error, stackTrace) {
+        firstFailure ??= error;
+        firstStackTrace ??= stackTrace;
+      }
+    }
     try {
       await _runtime.close();
     } catch (error, stackTrace) {
@@ -560,6 +659,40 @@ final class FluidAudioSpeechProvider extends IdempotentSpeechProvider
       Error.throwWithStackTrace(
         firstFailure,
         firstStackTrace ?? StackTrace.current,
+      );
+    }
+  }
+
+  /// Loads the ITN driver once and reuses it for the provider's lifetime.
+  ///
+  /// A failed load is not cached, so a later call retries rather than replaying
+  /// a stale error — the native normalization library can become available
+  /// after a model install.
+  Future<FluidItnDriver> _inverseTextNormalizer() async {
+    ensureOpen();
+    final pending = _itnDriver ??= _runtime.createItn();
+    try {
+      return await pending;
+    } catch (error) {
+      if (identical(_itnDriver, pending)) {
+        _itnDriver = null;
+      }
+      throw fluidSpeechFailure(
+        'fluid_itn_unavailable',
+        'prepare',
+        'FluidAudio inverse text normalization is unavailable.',
+        cause: error,
+      );
+    }
+  }
+
+  void _validateNormalizationLanguage(String? languageTag) {
+    final language = fluidLanguageCode(languageTag);
+    if (language != null && language != 'en') {
+      throw fluidSpeechFailure(
+        'fluid_language_unsupported',
+        'normalization',
+        'FluidAudio inverse text normalization supports English text only.',
       );
     }
   }
@@ -719,4 +852,27 @@ double? _safeProviderConfidence(double? value) {
     return null;
   }
   return value.clamp(0, 1).toDouble();
+}
+
+/// Attaches this adapter's embedding-space provenance to a raw diarizer vector.
+///
+/// FluidAudio's VBx vectors are not normalized on the way out, so they are
+/// normalized here to satisfy `SpeakerEmbedding`'s contract. A vector that is
+/// empty or contains a non-finite value is dropped rather than surfaced: a
+/// half-valid embedding would be persisted into a voice profile and quietly
+/// poison every later comparison.
+SpeakerEmbedding? _speakerEmbedding(Float32List? vector) {
+  if (vector == null || vector.isEmpty) {
+    return null;
+  }
+  for (final value in vector) {
+    if (!value.isFinite) {
+      return null;
+    }
+  }
+  return SpeakerEmbedding.normalized(
+    providerId: fluidAudioProviderId,
+    modelId: fluidDiarizationModelId,
+    vector: vector,
+  );
 }

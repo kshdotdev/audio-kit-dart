@@ -1,0 +1,46 @@
+audio_processing
+Copyright (c) 2026 Kauan Guesser
+
+This package contains code adapted from Control Center
+(https://github.com/SamuelAlev/control-center), used under the MIT License:
+
+    Copyright (c) 2026 Samuel Alev
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+    IN THE SOFTWARE.
+
+Adapted files:
+
+  lib/src/aec_delay_estimator.dart
+    from lib/features/meetings/data/services/aec_delay_estimator.dart
+    Amplitude-scale constants rescaled from PCM16 to float32; envelope RMS
+    helper reworked to consume float32 sample frames; explicit reset() and
+    two-tier hasLock() added.
+
+  lib/src/aec_blocks.dart
+    block-accumulation strategy from _BlockAccumulator in
+    lib/features/meetings/data/services/aec_mic_filter.dart
+    Reworked to accumulate float32 sample frames and convert to int16 at the
+    block boundary.
+
+  lib/src/waveform.dart
+    from packages/cc_domain/lib/features/meetings/domain/services/
+    meeting_waveform.dart
+
+Portions of the accompanying test suite are likewise adapted from Control
+Center's tests for the same components.

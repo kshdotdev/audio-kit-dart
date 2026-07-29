@@ -27,6 +27,7 @@ import os
     private let lifecycle = NSLock()
     private let running = OSAllocatedUnfairLock(initialState: false)
     private let failureScheduled = OSAllocatedUnfairLock(initialState: false)
+    private let holdsActivity = OSAllocatedUnfairLock(initialState: false)
     private var tapId = AudioObjectID(kAudioObjectUnknown)
     private var aggregateId = AudioObjectID(kAudioObjectUnknown)
     private var ioProcId: AudioDeviceIOProcID?
@@ -84,6 +85,7 @@ import os
         unwindLocked()
         throw error
       }
+      setActivityHold(true)
       events.emit(
         AudioSessionEventMessage(
           sessionId: sessionId,
@@ -167,6 +169,7 @@ import os
         workerQueue.sync {}
         recorder?.close()
         recorder = nil
+        setActivityHold(false)
         mailbox.finish(discardBuffered: true)
         events.emit(
           AudioSessionEventMessage(
@@ -222,20 +225,35 @@ import os
       }
       tapId = tap
 
-      let aggregateDescription: [String: Any] = [
-        kAudioAggregateDeviceNameKey as String: "audio_flutter aggregate",
-        kAudioAggregateDeviceUIDKey as String: UUID().uuidString,
-        kAudioAggregateDeviceIsPrivateKey as String: true,
-        kAudioAggregateDeviceTapAutoStartKey as String: true,
-        kAudioAggregateDeviceTapListKey as String: [
-          [kAudioSubTapUIDKey as String: description.uuid.uuidString]
-        ],
-      ]
+      // Adapted from Control Center (MIT © 2026 Samuel Alev): a tap-only
+      // aggregate supplies no clock of its own, and was observed never to be
+      // clocked on macOS 26 with a USB output device — the aggregate's
+      // `kAudioDevicePropertyDeviceIsRunning` stayed 0 and the IO proc never
+      // fired, with the capture grant in place. Anchoring the aggregate to the
+      // current default output device as both main sub-device and explicit
+      // clock device gives the HAL real hardware to clock from. The output
+      // device is a clock source only; the tap still carries the whole-system
+      // mix regardless of output routing.
+      let clockDeviceUid = Self.defaultOutputDeviceUid()
       var aggregate = AudioObjectID(kAudioObjectUnknown)
       status = AudioHardwareCreateAggregateDevice(
-        aggregateDescription as CFDictionary,
+        Self.aggregateDescription(
+          tapUid: description.uuid.uuidString,
+          clockDeviceUid: clockDeviceUid
+        ) as CFDictionary,
         &aggregate
       )
+      if status != noErr, clockDeviceUid != nil {
+        // A composition the HAL rejects must not cost the session its capture:
+        // retry as the unclocked tap-only aggregate.
+        status = AudioHardwareCreateAggregateDevice(
+          Self.aggregateDescription(
+            tapUid: description.uuid.uuidString,
+            clockDeviceUid: nil
+          ) as CFDictionary,
+          &aggregate
+        )
+      }
       guard status == noErr else {
         unwindLocked()
         throw PigeonError(
@@ -344,6 +362,7 @@ import os
       recorder?.close()
       recorder = nil
       running.withLock { $0 = false }
+      setActivityHold(false)
       let failed = failureScheduled.withLock { $0 }
       lifecycle.unlock()
       mailbox.finish(discardBuffered: discardBuffered || failed)
@@ -414,6 +433,22 @@ import os
       if tapId != AudioObjectID(kAudioObjectUnknown) {
         AudioHardwareDestroyProcessTap(tapId)
         tapId = AudioObjectID(kAudioObjectUnknown)
+      }
+    }
+
+    /// Holds the process-wide App Nap assertion while this session captures.
+    /// Idempotent, so repeated stops and `deinit` cannot unbalance the refcount.
+    private func setActivityHold(_ held: Bool) {
+      let changed = holdsActivity.withLock { current -> Bool in
+        guard current != held else { return false }
+        current = held
+        return true
+      }
+      guard changed else { return }
+      if held {
+        CaptureActivity.shared.acquire()
+      } else {
+        CaptureActivity.shared.release()
       }
     }
 
@@ -546,6 +581,87 @@ import os
       return AVAudioFormat(streamDescription: &description)
     }
 
+    /// The private aggregate device that exposes the tap as an input stream.
+    ///
+    /// `clockDeviceUid` anchors the aggregate to real output hardware; `nil`
+    /// builds the tap-only aggregate, which has no clock source of its own.
+    static func aggregateDescription(
+      tapUid: String,
+      clockDeviceUid: String?
+    ) -> [String: Any] {
+      var tap: [String: Any] = [kAudioSubTapUIDKey as String: tapUid]
+      var description: [String: Any] = [
+        kAudioAggregateDeviceNameKey as String: "audio_flutter aggregate",
+        kAudioAggregateDeviceUIDKey as String: UUID().uuidString,
+        kAudioAggregateDeviceIsPrivateKey as String: true,
+        kAudioAggregateDeviceTapAutoStartKey as String: true,
+      ]
+      guard let clockDeviceUid else {
+        description[kAudioAggregateDeviceTapListKey as String] = [tap]
+        return description
+      }
+      // The tap and the clock device are separate timing domains, so the tap
+      // sub-entry compensates for drift between them.
+      tap[kAudioSubTapDriftCompensationKey as String] = true
+      description[kAudioAggregateDeviceIsStackedKey as String] = false
+      description[kAudioAggregateDeviceMainSubDeviceKey as String] =
+        clockDeviceUid
+      description[kAudioAggregateDeviceClockDeviceKey as String] =
+        clockDeviceUid
+      description[kAudioAggregateDeviceSubDeviceListKey as String] = [
+        [kAudioSubDeviceUIDKey as String: clockDeviceUid]
+      ]
+      description[kAudioAggregateDeviceTapListKey as String] = [tap]
+      return description
+    }
+
+    /// UID of the current default output device, resolved when the aggregate is
+    /// created so it follows the user's live output selection.
+    ///
+    /// `nil` when the machine reports no default output (every output device
+    /// unplugged, headless CI), in which case the caller falls back to the
+    /// tap-only aggregate rather than failing the capture.
+    static func defaultOutputDeviceUid() -> String? {
+      var deviceAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+      )
+      var device = AudioDeviceID(kAudioObjectUnknown)
+      var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+      guard
+        AudioObjectGetPropertyData(
+          AudioObjectID(kAudioObjectSystemObject),
+          &deviceAddress,
+          0,
+          nil,
+          &size,
+          &device
+        ) == noErr,
+        device != AudioDeviceID(kAudioObjectUnknown)
+      else { return nil }
+
+      var uidAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyDeviceUID,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+      )
+      var value: Unmanaged<CFString>?
+      var uidSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+      guard
+        AudioObjectGetPropertyData(
+          device,
+          &uidAddress,
+          0,
+          nil,
+          &uidSize,
+          &value
+        ) == noErr,
+        let value
+      else { return nil }
+      return value.takeRetainedValue() as String
+    }
+
     static func listProcesses() -> [AudioProcessMessage] {
       var address = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyProcessObjectList,
@@ -640,6 +756,20 @@ import os
       }
     }
 
+    /// Advisory only — this can report an optimistic `true`.
+    ///
+    /// The `kTCCServiceAudioCapture` grant is documented by Control Center
+    /// (MIT © 2026 Samuel Alev) as enforced at delivery rather than at
+    /// creation: an unauthorized tap still creates, still reports a valid
+    /// format, and is simply fed silence. Tap creation therefore proves the API
+    /// is reachable, not that audio will arrive. The authoritative signal is
+    /// capture health — a running session whose non-zero frame count never
+    /// advances, reported by `start()`'s watchdog as `receivingAudio: false`
+    /// and then as `SystemCaptureDead`.
+    ///
+    /// Gating this on observed non-silent frames needs validation against an
+    /// actually-denied grant on current macOS before the behaviour changes;
+    /// until then the contract is documented as advisory rather than rewritten.
     static func preflightPermission() -> Bool {
       let ownProcess = translatePid(getpid())
       let excluded =

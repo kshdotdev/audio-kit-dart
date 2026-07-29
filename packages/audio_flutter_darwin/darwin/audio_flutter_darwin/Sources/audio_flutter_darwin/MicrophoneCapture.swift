@@ -26,6 +26,9 @@ final class MicrophoneCaptureSession: NativeCaptureSession {
   private let lifecycle = NSLock()
   private let running = OSAllocatedUnfairLock(initialState: false)
   private let failureScheduled = OSAllocatedUnfairLock(initialState: false)
+  #if os(macOS)
+    private let holdsActivity = OSAllocatedUnfairLock(initialState: false)
+  #endif
   private var assembler: CaptureFrameAssembler?
   private var converter: PersistentAudioConverter?
   private var recorder: RawAudioRecorder?
@@ -153,6 +156,7 @@ final class MicrophoneCaptureSession: NativeCaptureSession {
       #endif
       throw error
     }
+    setActivityHold(true)
     events.emit(
       AudioSessionEventMessage(
         sessionId: sessionId,
@@ -197,6 +201,7 @@ final class MicrophoneCaptureSession: NativeCaptureSession {
     recorder?.close()
     recorder = nil
     running.withLock { $0 = false }
+    setActivityHold(false)
     let failed = failureScheduled.withLock { $0 }
     mailbox.finish(discardBuffered: discardBuffered || failed)
     #if os(iOS)
@@ -245,6 +250,25 @@ final class MicrophoneCaptureSession: NativeCaptureSession {
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       self?.stop(discardBuffered: true)
     }
+  }
+
+  /// Holds the process-wide App Nap assertion while this session captures.
+  /// Idempotent, so repeated stops and `deinit` cannot unbalance the refcount.
+  /// No-op on iOS, which has no App Nap.
+  private func setActivityHold(_ held: Bool) {
+    #if os(macOS)
+      let changed = holdsActivity.withLock { current -> Bool in
+        guard current != held else { return false }
+        current = held
+        return true
+      }
+      guard changed else { return }
+      if held {
+        CaptureActivity.shared.acquire()
+      } else {
+        CaptureActivity.shared.release()
+      }
+    #endif
   }
 
   deinit {

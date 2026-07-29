@@ -97,6 +97,10 @@ final class DarwinAudioFlutterPlatform extends AudioFlutterPlatform {
   Future<bool> isSystemAudioCaptureSupported() =>
       _host.isSystemAudioCaptureSupported();
 
+  /// Advisory on macOS: the grant is enforced at delivery, so this preflight
+  /// can report `true` for a tap that will only ever deliver silence. Capture
+  /// health (a running session with `receivingAudio` false, then
+  /// `SystemCaptureDead`) is the authoritative signal.
   @override
   Future<bool> requestSystemAudioCapturePermission() =>
       _host.requestSystemAudioCapturePermission();

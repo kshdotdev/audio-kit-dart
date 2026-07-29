@@ -332,6 +332,101 @@ void main() {
       await provider.close();
     });
 
+    test('surfaces speaker embeddings with their space provenance', () async {
+      final runtime = _FakeRuntime();
+      final source = _FiniteAudioSource(
+        format: mono16k,
+        samples: Float32List(160),
+      );
+      final provider = FluidAudioSpeechProvider(runtime: runtime);
+
+      final result = await provider.diarize(
+        BatchDiarizationRequest(audio: source),
+      );
+
+      final embedding = result.segments.single.embedding;
+      expect(embedding, isNotNull);
+      expect(embedding!.providerId, 'fluidaudio');
+      expect(embedding.modelId, 'vbx-diarization');
+      expect(embedding.dimension, 3);
+      // The driver reports [3, 4, 0]; the adapter L2-normalizes to satisfy
+      // SpeakerEmbedding's contract.
+      expect(embedding.vector[0], closeTo(0.6, 1e-6));
+      expect(embedding.vector[1], closeTo(0.8, 1e-6));
+      expect(embedding.spaceId, 'fluidaudio/vbx-diarization/3');
+      await provider.close();
+    });
+
+    test(
+      'drops an absent or non-finite embedding instead of surfacing it',
+      () async {
+        final runtime = _FakeRuntime();
+        runtime.nextDiarization = _FakeDiarizationDriver(
+          segments: <FluidDriverSpeakerSegment>[
+            const FluidDriverSpeakerSegment(
+              speakerId: 'S1',
+              start: Duration.zero,
+              end: Duration(milliseconds: 10),
+            ),
+            FluidDriverSpeakerSegment(
+              speakerId: 'S2',
+              start: const Duration(milliseconds: 10),
+              end: const Duration(milliseconds: 20),
+              embedding: Float32List.fromList(<double>[]),
+            ),
+            FluidDriverSpeakerSegment(
+              speakerId: 'S3',
+              start: const Duration(milliseconds: 20),
+              end: const Duration(milliseconds: 30),
+              embedding: Float32List.fromList(<double>[1, double.nan]),
+            ),
+          ],
+        );
+        final source = _FiniteAudioSource(
+          format: mono16k,
+          samples: Float32List(160),
+        );
+        final provider = FluidAudioSpeechProvider(runtime: runtime);
+
+        final result = await provider.diarize(
+          BatchDiarizationRequest(audio: source),
+        );
+
+        expect(result.segments, hasLength(3));
+        expect(
+          result.segments.map((segment) => segment.embedding),
+          everyElement(isNull),
+        );
+        await provider.close();
+      },
+    );
+
+    test(
+      'declares the diarization and embedding capabilities together',
+      () async {
+        final provider = FluidAudioSpeechProvider(runtime: _FakeRuntime());
+
+        expect(
+          provider.descriptor.supports(SpeechCapability.diarization),
+          isTrue,
+        );
+        expect(
+          provider.descriptor.supports(SpeechCapability.speakerEmbedding),
+          isTrue,
+        );
+        expect(
+          provider.descriptor.models
+              .firstWhere((model) => model.id == 'vbx-diarization')
+              .capabilities,
+          containsAll(<SpeechCapability>{
+            SpeechCapability.diarization,
+            SpeechCapability.speakerEmbedding,
+          }),
+        );
+        await provider.close();
+      },
+    );
+
     test('cancellation closes an in-flight batch driver', () async {
       final runtime = _FakeRuntime();
       final driver = _FakeBatchAsrDriver()..block = true;
@@ -394,6 +489,162 @@ void main() {
     });
   });
 
+  group('FluidAudioSpeechProvider inverse text normalization', () {
+    test('declares the capability and normalizes spoken forms', () async {
+      final runtime = _FakeRuntime();
+      final provider = FluidAudioSpeechProvider(runtime: runtime);
+
+      expect(
+        provider.descriptor.supports(SpeechCapability.inverseTextNormalization),
+        isTrue,
+      );
+      expect(
+        await provider.normalize('that is twenty five dollars'),
+        r'that is $25',
+      );
+      expect(runtime.lastItn.normalized, <String>[
+        'that is twenty five dollars',
+      ]);
+
+      await provider.close();
+    });
+
+    test('loads the native normalizer once and closes it', () async {
+      final runtime = _FakeRuntime();
+      final provider = FluidAudioSpeechProvider(runtime: runtime);
+
+      await provider.normalize('one');
+      await provider.normalize('two');
+
+      expect(runtime.itnCreateCount, 1);
+      await provider.close();
+      expect(runtime.lastItn.closeCount, 1);
+    });
+
+    test('normalizeSentences returns one result per input, in order', () async {
+      final runtime = _FakeRuntime();
+      final provider = FluidAudioSpeechProvider(runtime: runtime);
+
+      final results = await provider.normalizeSentences(<String>[
+        'twenty five dollars',
+        '',
+        'plain',
+      ]);
+
+      expect(results, <String>[r'$25', '', 'plain']);
+      // Blank input never reaches the native layer.
+      expect(runtime.lastItn.normalized, <String>[
+        'twenty five dollars',
+        'plain',
+      ]);
+      expect(await provider.normalizeSentences(const <String>[]), isEmpty);
+
+      await provider.close();
+    });
+
+    test(
+      'blank text is returned unchanged without loading the model',
+      () async {
+        final runtime = _FakeRuntime();
+        final provider = FluidAudioSpeechProvider(runtime: runtime);
+
+        expect(await provider.normalize('   '), '   ');
+
+        expect(runtime.itnCreateCount, 0);
+        await provider.close();
+      },
+    );
+
+    test('forwards custom rules to the native grammar', () async {
+      final runtime = _FakeRuntime();
+      final provider = FluidAudioSpeechProvider(runtime: runtime);
+
+      await provider.addRule(
+        InverseTextNormalizationRule(spoken: 'ectos', written: 'Ectos'),
+      );
+
+      expect(runtime.lastItn.rules, <({String spoken, String written})>[
+        (spoken: 'ectos', written: 'Ectos'),
+      ]);
+      await provider.close();
+    });
+
+    test('rejects a non-English language tag', () async {
+      final runtime = _FakeRuntime();
+      final provider = FluidAudioSpeechProvider(runtime: runtime);
+
+      await expectLater(
+        provider.normalize('vinte e cinco', languageTag: 'pt-BR'),
+        throwsA(
+          isA<SpeechFailure>().having(
+            (failure) => failure.code,
+            'code',
+            'fluid_language_unsupported',
+          ),
+        ),
+      );
+      expect(runtime.itnCreateCount, 0);
+      // An English tag, however spelled, is accepted.
+      expect(await provider.normalize('plain', languageTag: 'en-US'), 'plain');
+
+      await provider.close();
+    });
+
+    test(
+      'an unavailable native library fails and is retried, not cached',
+      () async {
+        final runtime = _FakeRuntime()
+          ..itnCreateError = StateError('itn unavailable');
+        final provider = FluidAudioSpeechProvider(runtime: runtime);
+
+        await expectLater(
+          provider.normalize('one'),
+          throwsA(
+            isA<SpeechFailure>().having(
+              (failure) => failure.code,
+              'code',
+              'fluid_itn_unavailable',
+            ),
+          ),
+        );
+
+        // The library can appear after a model install, so the load is retried.
+        expect(await provider.normalize('one'), 'one');
+        expect(runtime.itnCreateCount, 2);
+        await provider.close();
+      },
+    );
+
+    test('wraps a native normalization failure as a speech failure', () async {
+      final runtime = _FakeRuntime()
+        ..nextItn = (_FakeItnDriver()..normalizeError = StateError('boom'));
+      final provider = FluidAudioSpeechProvider(runtime: runtime);
+
+      await expectLater(
+        provider.normalize('one'),
+        throwsA(
+          isA<SpeechFailure>()
+              .having((failure) => failure.code, 'code', 'fluid_itn_failed')
+              .having((failure) => failure.stage, 'stage', 'normalization'),
+        ),
+      );
+      await provider.close();
+    });
+
+    test('rejects normalization after the provider is closed', () async {
+      final provider = FluidAudioSpeechProvider(runtime: _FakeRuntime());
+      await provider.close();
+
+      await expectLater(provider.normalize('one'), throwsStateError);
+      await expectLater(
+        provider.addRule(
+          InverseTextNormalizationRule(spoken: 'a', written: 'b'),
+        ),
+        throwsStateError,
+      );
+    });
+  });
+
   test('TTS is a finite AudioSource with deterministic metadata', () async {
     final runtime = _FakeRuntime();
     final tts = _FakeTtsDriver(<Float32List>[
@@ -450,6 +701,8 @@ final class _FakeRuntime implements FluidAudioRuntime {
   _FakeEouDriver? nextEou;
   _FakeDiarizationDriver? nextDiarization;
   _FakeTtsDriver? nextTts;
+  _FakeItnDriver? nextItn;
+  Object? itnCreateError;
 
   late FluidStreamingAsrDriverConfiguration lastStreamingConfiguration;
   late _FakeStreamingAsrDriver lastStreaming;
@@ -460,8 +713,10 @@ final class _FakeRuntime implements FluidAudioRuntime {
   late _FakeDiarizationDriver lastDiarization;
   late FluidTtsDriverConfiguration lastTtsConfiguration;
   late _FakeTtsDriver lastTts;
+  late _FakeItnDriver lastItn;
   var closeCount = 0;
   var batchCreateCount = 0;
+  var itnCreateCount = 0;
 
   @override
   Future<FluidStreamingAsrDriver> createStreamingAsr(
@@ -521,6 +776,48 @@ final class _FakeRuntime implements FluidAudioRuntime {
     lastTts = nextTts ?? _FakeTtsDriver(const <Float32List>[]);
     nextTts = null;
     return lastTts;
+  }
+
+  @override
+  Future<FluidItnDriver> createItn() async {
+    itnCreateCount += 1;
+    if (itnCreateError case final Object error) {
+      itnCreateError = null;
+      throw error;
+    }
+    lastItn = nextItn ?? _FakeItnDriver();
+    nextItn = null;
+    return lastItn;
+  }
+
+  @override
+  Future<void> close() async {
+    closeCount += 1;
+  }
+}
+
+final class _FakeItnDriver implements FluidItnDriver {
+  final List<String> normalized = <String>[];
+  final List<({String spoken, String written})> rules =
+      <({String spoken, String written})>[];
+  Object? normalizeError;
+  var closeCount = 0;
+
+  @override
+  Future<String> normalizeSentence(String text) async {
+    normalized.add(text);
+    if (normalizeError case final Object error) {
+      throw error;
+    }
+    return text.replaceAll('twenty five dollars', r'$25');
+  }
+
+  @override
+  Future<void> addRule({
+    required String spoken,
+    required String written,
+  }) async {
+    rules.add((spoken: spoken, written: written));
   }
 
   @override
@@ -670,18 +967,26 @@ final class _FakeEouDriver implements FluidEndOfUtteranceDriver {
 }
 
 final class _FakeDiarizationDriver implements FluidDiarizationDriver {
+  _FakeDiarizationDriver({List<FluidDriverSpeakerSegment>? segments})
+    : segments =
+          segments ??
+          <FluidDriverSpeakerSegment>[
+            FluidDriverSpeakerSegment(
+              speakerId: 'S1',
+              start: Duration.zero,
+              end: const Duration(milliseconds: 10),
+              confidence: 0.8,
+              // Deliberately un-normalized, as FluidAudio's VBx vectors are.
+              embedding: Float32List.fromList(<double>[3, 4, 0]),
+            ),
+          ];
+
+  final List<FluidDriverSpeakerSegment> segments;
   var closeCount = 0;
 
   @override
   Future<List<FluidDriverSpeakerSegment>> diarize(Float32List samples) async =>
-      const <FluidDriverSpeakerSegment>[
-        FluidDriverSpeakerSegment(
-          speakerId: 'S1',
-          start: Duration.zero,
-          end: Duration(milliseconds: 10),
-          confidence: 0.8,
-        ),
-      ];
+      segments;
 
   @override
   Future<void> close() async {
