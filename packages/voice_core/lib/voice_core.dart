@@ -3,6 +3,7 @@ library;
 
 export 'src/backend.dart';
 export 'src/controller.dart';
+export 'src/duplex.dart';
 export 'src/failure.dart';
 export 'src/interfaces.dart';
 export 'src/sentence_segmenter.dart';

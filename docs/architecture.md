@@ -239,7 +239,9 @@ with iOS; system capture remains macOS-only.
 The default controller is half-duplex. It gates recognition while output is
 playing but keeps capture and VAD active. VAD can therefore trigger barge-in.
 Recognition resumes after the previous backend and output work has been
-invalidated.
+invalidated. An opt-in full-duplex mode (`VoiceDuplexConfig.fullDuplex`) keeps
+recognition live during playback with the microphone cleaned by `audio_aec`;
+without an AEC library it degrades to the ordinary half-duplex path.
 
 Every turn has a monotonically increasing generation ID. Interruption cancels
 the backend stream and active TTS, advances the generation, discards pending
@@ -282,8 +284,9 @@ fan the same synthesized frames into recording, metering, or analysis sinks.
 - MLX inference is Apple-Silicon-only.
 - Native capture restart/drop metadata currently reaches Dart as a dropped
   range; a distinct native `sourceRestart` reason is not transported yet.
-- The default voice controller is half-duplex with VAD barge-in. Full-duplex
-  acoustic echo cancellation is future work.
+- The default voice controller is half-duplex with VAD barge-in. Full duplex
+  with acoustic echo cancellation is available opt-in via `audio_aec`; its
+  native-library distribution story is still being decided.
 - The graph is implemented in Dart. FluidAudio-specific fused native routing
   is deferred until profiling justifies it.
 - All packages are published to pub.dev and consumed hosted by Ectos

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:typed_data';
 
 import 'package:audio_core/audio_core.dart';
@@ -10,6 +11,10 @@ final class FakeSherpaRuntime implements SherpaRuntime {
   final List<SherpaBatchAsrConfiguration> asrConfigurations =
       <SherpaBatchAsrConfiguration>[];
 
+  /// Configurations passed to [createStreamingAsr], in call order.
+  final List<SherpaStreamingAsrConfiguration> streamingConfigurations =
+      <SherpaStreamingAsrConfiguration>[];
+
   /// Configurations passed to [createDiarizer], in call order.
   final List<SherpaDiarizationConfiguration> diarizationConfigurations =
       <SherpaDiarizationConfiguration>[];
@@ -20,6 +25,24 @@ final class FakeSherpaRuntime implements SherpaRuntime {
 
   /// Drivers handed out, so tests can assert on close behavior.
   final List<FakeBatchAsrDriver> asrDrivers = <FakeBatchAsrDriver>[];
+
+  /// Streaming drivers handed out, in creation order.
+  final List<FakeStreamingAsrDriver> streamingDrivers =
+      <FakeStreamingAsrDriver>[];
+
+  /// Updates each streaming driver returns from successive `accept` calls.
+  ///
+  /// Once exhausted the driver reports an empty hypothesis, which is what
+  /// sherpa does for a chunk of silence.
+  List<SherpaDriverStreamingUpdate> streamingUpdates =
+      const <SherpaDriverStreamingUpdate>[];
+
+  /// Update each streaming driver returns from `finish`.
+  SherpaDriverStreamingUpdate streamingFinishUpdate =
+      SherpaDriverStreamingUpdate.empty;
+
+  /// Delay applied to the nth `accept`, so ordering can be tested.
+  List<Duration> streamingAcceptDelays = const <Duration>[];
 
   /// Result returned by every recognizer this runtime creates.
   SherpaDriverTranscript transcript = const SherpaDriverTranscript(text: '');
@@ -40,6 +63,20 @@ final class FakeSherpaRuntime implements SherpaRuntime {
     asrConfigurations.add(configuration);
     final driver = FakeBatchAsrDriver(() => transcript);
     asrDrivers.add(driver);
+    return driver;
+  }
+
+  @override
+  Future<SherpaStreamingAsrDriver> createStreamingAsr(
+    SherpaStreamingAsrConfiguration configuration,
+  ) async {
+    streamingConfigurations.add(configuration);
+    final driver = FakeStreamingAsrDriver(
+      updates: streamingUpdates,
+      finishUpdate: streamingFinishUpdate,
+      acceptDelays: streamingAcceptDelays,
+    );
+    streamingDrivers.add(driver);
     return driver;
   }
 
@@ -86,6 +123,77 @@ final class FakeBatchAsrDriver implements SherpaBatchAsrDriver {
 
   @override
   Future<void> close() async {
+    closed = true;
+  }
+}
+
+/// Streaming recognizer that replays scripted decoder updates.
+final class FakeStreamingAsrDriver implements SherpaStreamingAsrDriver {
+  /// Creates a fake streaming recognizer.
+  FakeStreamingAsrDriver({
+    Iterable<SherpaDriverStreamingUpdate> updates =
+        const <SherpaDriverStreamingUpdate>[],
+    this.finishUpdate = SherpaDriverStreamingUpdate.empty,
+    this.acceptDelays = const <Duration>[],
+  }) : _updates = Queue<SherpaDriverStreamingUpdate>.of(updates);
+
+  final Queue<SherpaDriverStreamingUpdate> _updates;
+
+  /// Update returned by [finish].
+  SherpaDriverStreamingUpdate finishUpdate;
+
+  /// Delay applied to the nth [accept], so ordering can be tested.
+  final List<Duration> acceptDelays;
+
+  /// Thrown by the next [accept], then cleared.
+  Object? acceptError;
+
+  /// Sample buffers handed to [accept], in arrival order.
+  final List<Float32List> received = <Float32List>[];
+
+  /// Every driver call by name, so ordering against [reset] is observable.
+  final List<String> calls = <String>[];
+
+  /// Number of times [reset] ran.
+  int resetCount = 0;
+
+  /// Whether [close] ran.
+  bool closed = false;
+
+  @override
+  Future<SherpaDriverStreamingUpdate> accept(Float32List samples) async {
+    final index = received.length;
+    received.add(samples);
+    calls.add('accept');
+    if (index < acceptDelays.length) {
+      await Future<void>.delayed(acceptDelays[index]);
+    }
+    final error = acceptError;
+    if (error != null) {
+      acceptError = null;
+      throw error;
+    }
+    if (_updates.isEmpty) {
+      return SherpaDriverStreamingUpdate.empty;
+    }
+    return _updates.removeFirst();
+  }
+
+  @override
+  Future<void> reset() async {
+    calls.add('reset');
+    resetCount += 1;
+  }
+
+  @override
+  Future<SherpaDriverStreamingUpdate> finish() async {
+    calls.add('finish');
+    return finishUpdate;
+  }
+
+  @override
+  Future<void> close() async {
+    calls.add('close');
     closed = true;
   }
 }

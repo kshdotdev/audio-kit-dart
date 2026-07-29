@@ -90,6 +90,60 @@ void main() {
       }
     });
 
+    test('streams a real OnlineRecognizer without hallucinating', () async {
+      const model = SherpaRecognitionModel.streamingZipformerEn;
+      expect(
+        registry.resolveRecognition(model),
+        isNotNull,
+        reason: 'Install ${model.id} under $modelRoot first.',
+      );
+
+      final format = AudioFormat(sampleRate: 16000, channels: 1);
+      final session = await provider.prepareStreamingRecognition(
+        StreamingRecognitionRequest(inputFormat: format),
+      );
+      final events = <SpeechRecognitionEvent>[];
+      final subscription = session.results.listen(events.add);
+      addTearDown(subscription.cancel);
+
+      // Two seconds in 100 ms chunks, the cadence a live capture produces.
+      const chunkSamples = 1600;
+      final audio = _twoTones();
+      for (var offset = 0; offset < audio.length; offset += chunkSamples) {
+        final end = math.min(offset + chunkSamples, audio.length);
+        await session.write(
+          AudioFrame.owned(
+            format: format,
+            samples: Float32List.sublistView(audio, offset, end),
+            sourceId: 'integration',
+            trackId: 'integration',
+            clockId: 'integration',
+            sequence: offset ~/ chunkSamples,
+            sampleOffset: offset,
+            timestamp: Duration(
+              microseconds:
+                  offset * Duration.microsecondsPerSecond ~/ format.sampleRate,
+            ),
+          ),
+        );
+      }
+      await session.finish();
+
+      // Tones are not speech, so the only hard assertion is that the decode
+      // loop ran to completion and invented nothing.
+      expect(session.status.state, AudioSessionState.closed);
+      expect(events.whereType<RecognitionFailed>(), isEmpty);
+      for (final event in events) {
+        switch (event) {
+          case RecognitionPartial(:final transcript):
+          case RecognitionFinal(:final transcript):
+            expect(transcript.text.trim(), isEmpty);
+          default:
+            break;
+        }
+      }
+    });
+
     test('detects speech in a tone burst surrounded by silence', () async {
       expect(
         registry.resolveVad(),

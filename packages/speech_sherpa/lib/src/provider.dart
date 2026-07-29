@@ -14,13 +14,14 @@ import 'sessions.dart';
 
 /// Cross-platform speech provider backed by sherpa-onnx.
 ///
-/// Covers batch recognition, voice-activity detection, diarization, and the
-/// speaker vectors behind it, on every platform Flutter targets. Streaming
-/// recognition is deliberately not declared: sherpa exposes an
-/// `OnlineRecognizer`, but wiring it is separate work, and an undeclared
-/// capability is preferable to one that throws.
+/// Covers streaming and batch recognition, voice-activity detection,
+/// diarization, and the speaker vectors behind it, on every platform Flutter
+/// targets. The two recognition paths use different models and different
+/// sherpa recognizers, so [transcribe] and [prepareStreamingRecognition]
+/// resolve from disjoint halves of the catalog.
 final class SherpaSpeechProvider extends IdempotentSpeechProvider
     implements
+        StreamingSpeechToTextProvider,
         BatchSpeechToTextProvider,
         VoiceActivityDetectionProvider,
         BatchDiarizationProvider {
@@ -56,12 +57,35 @@ final class SherpaSpeechProvider extends IdempotentSpeechProvider
 
   static final SpeechProviderDescriptor _descriptor = buildSherpaDescriptor();
 
-  /// Resolves the catalog entry for [modelId], defaulting when absent.
-  static SherpaRecognitionModel resolveRecognitionModel(String? modelId) {
+  /// Resolves the batch catalog entry for [modelId], defaulting when absent.
+  static SherpaRecognitionModel resolveRecognitionModel(String? modelId) =>
+      _resolveModel(
+        modelId: modelId,
+        candidates: SherpaRecognitionModel.batchModels,
+        fallback: SherpaRecognitionModel.defaultModel,
+        description: 'a batch recognition model',
+      );
+
+  /// Resolves the streaming catalog entry for [modelId], defaulting when
+  /// absent.
+  static SherpaRecognitionModel resolveStreamingModel(String? modelId) =>
+      _resolveModel(
+        modelId: modelId,
+        candidates: SherpaRecognitionModel.streamingModels,
+        fallback: SherpaRecognitionModel.defaultStreamingModel,
+        description: 'a streaming recognition model',
+      );
+
+  static SherpaRecognitionModel _resolveModel({
+    required String? modelId,
+    required List<SherpaRecognitionModel> candidates,
+    required SherpaRecognitionModel fallback,
+    required String description,
+  }) {
     if (modelId == null) {
-      return SherpaRecognitionModel.defaultModel;
+      return fallback;
     }
-    for (final model in SherpaRecognitionModel.all) {
+    for (final model in candidates) {
       if (model.id == modelId) {
         return model;
       }
@@ -69,7 +93,7 @@ final class SherpaSpeechProvider extends IdempotentSpeechProvider
     throw sherpaSpeechFailure(
       'sherpa_unknown_model',
       'prepare',
-      'The requested model is not part of the sherpa-onnx catalog.',
+      'The requested model is not $description in the sherpa-onnx catalog.',
     );
   }
 
@@ -129,6 +153,43 @@ final class SherpaSpeechProvider extends IdempotentSpeechProvider
               ),
             ],
     );
+  }
+
+  @override
+  Future<StreamingSpeechToTextSession> prepareStreamingRecognition(
+    StreamingRecognitionRequest request,
+  ) async {
+    ensureOpen();
+    final options = request.options;
+    final providerOptions = _streamingOptions(options.providerOptions);
+    final model = resolveStreamingModel(options.modelId);
+
+    final paths = registry.resolveRecognition(model);
+    if (paths == null) {
+      throw sherpaSpeechFailure(
+        'sherpa_model_not_installed',
+        'prepare',
+        'The ${model.displayName} model is not installed.',
+      );
+    }
+
+    final driver = await _runtime.createStreamingAsr(
+      buildStreamingAsrConfiguration(paths: paths, options: providerOptions),
+    );
+
+    final session = SherpaStreamingRecognitionSession(
+      onClosed: _sessions.remove,
+      format: request.inputFormat,
+      driver: driver,
+      // A monolingual model knows its own language better than the request
+      // does; only a multilingual one has anything to learn from the caller.
+      languageTag:
+          options.languageTag ??
+          (model.languageTags.length == 1 ? model.languageTags.single : null),
+      cancellation: request.cancellation,
+    );
+    _sessions.add(session);
+    return session;
   }
 
   @override
@@ -329,6 +390,20 @@ final class SherpaSpeechProvider extends IdempotentSpeechProvider
           'The supplied provider options belong to another provider.',
         ),
       };
+
+  SherpaStreamingRecognitionOptions _streamingOptions(
+    SpeechProviderOptions? value,
+  ) => switch (value) {
+    null => SherpaStreamingRecognitionOptions(),
+    final SherpaStreamingRecognitionOptions options => options,
+    // Batch options reach here when a caller reuses one request's options for
+    // the other path; the endpointing rules have no batch equivalent to read.
+    _ => throw sherpaSpeechFailure(
+      'sherpa_invalid_options',
+      'prepare',
+      'A streaming session requires SherpaStreamingRecognitionOptions.',
+    ),
+  };
 
   SherpaDiarizationOptions _diarizationOptions(SpeechProviderOptions? value) =>
       switch (value) {

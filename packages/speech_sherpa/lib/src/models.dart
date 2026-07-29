@@ -27,7 +27,7 @@ final class SherpaRecognitionModel {
     this.languageTags = const <String>{},
     this.isMultilingual = false,
   }) : assert(
-         kind != SherpaRecognitionModelKind.transducer || joinerFile != null,
+         kind == SherpaRecognitionModelKind.whisper || joinerFile != null,
          'A transducer model must declare a joinerFile.',
        );
 
@@ -138,16 +138,82 @@ final class SherpaRecognitionModel {
     languageTags: <String>{'en'},
   );
 
-  /// Every recognition model, default first.
+  /// k2 streaming Zipformer transducer, English — the streaming default.
+  ///
+  /// The `chunk-16-left-128` export: 16-frame chunks with 128 frames of left
+  /// context, which is the variant k2-fsa documents for live decoding. int8
+  /// encoder and joiner with an fp32 decoder, matching the upstream Flutter
+  /// streaming example — the decoder is two megabytes, so quantizing it buys
+  /// nothing and costs accuracy.
+  static const SherpaRecognitionModel streamingZipformerEn =
+      SherpaRecognitionModel(
+        id: 'sherpa-onnx-streaming-zipformer-en-2023-06-26',
+        displayName: 'Streaming Zipformer (English)',
+        kind: SherpaRecognitionModelKind.streamingTransducer,
+        archiveUrl:
+            'https://github.com/k2-fsa/sherpa-onnx/releases/download/'
+            'asr-models/sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2',
+        archiveBytes: 310414022,
+        unpackedDirName: 'sherpa-onnx-streaming-zipformer-en-2023-06-26',
+        encoderFile: 'encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx',
+        decoderFile: 'decoder-epoch-99-avg-1-chunk-16-left-128.onnx',
+        joinerFile: 'joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx',
+        tokensFile: 'tokens.txt',
+        languageTags: <String>{'en'},
+      );
+
+  /// k2 streaming Zipformer 20M, English — the low-power variant.
+  ///
+  /// A twentieth of the parameters of [streamingZipformerEn] at a quarter of
+  /// the download, for phones and single-board hosts that cannot spare the
+  /// larger encoder. Accuracy is correspondingly lower.
+  static const SherpaRecognitionModel streamingZipformerEn20M =
+      SherpaRecognitionModel(
+        id: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
+        displayName: 'Streaming Zipformer 20M (English)',
+        kind: SherpaRecognitionModelKind.streamingTransducer,
+        archiveUrl:
+            'https://github.com/k2-fsa/sherpa-onnx/releases/download/'
+            'asr-models/'
+            'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2',
+        archiveBytes: 127887156,
+        unpackedDirName: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
+        encoderFile: 'encoder-epoch-99-avg-1.int8.onnx',
+        decoderFile: 'decoder-epoch-99-avg-1.onnx',
+        joinerFile: 'joiner-epoch-99-avg-1.int8.onnx',
+        tokensFile: 'tokens.txt',
+        languageTags: <String>{'en'},
+      );
+
+  /// Models decoded in one pass by `OfflineRecognizer`, default first.
+  static const List<SherpaRecognitionModel> batchModels =
+      <SherpaRecognitionModel>[
+        parakeetTdtV3,
+        parakeetTdtV2,
+        whisperLargeV3Turbo,
+        whisperBaseEn,
+      ];
+
+  /// Models decoded incrementally by `OnlineRecognizer`, default first.
+  static const List<SherpaRecognitionModel> streamingModels =
+      <SherpaRecognitionModel>[streamingZipformerEn, streamingZipformerEn20M];
+
+  /// Every recognition model, batch first.
   static const List<SherpaRecognitionModel> all = <SherpaRecognitionModel>[
-    parakeetTdtV3,
-    parakeetTdtV2,
-    whisperLargeV3Turbo,
-    whisperBaseEn,
+    ...batchModels,
+    ...streamingModels,
   ];
 
-  /// The model used when a request names none.
+  /// The model used when a batch request names none.
   static const SherpaRecognitionModel defaultModel = parakeetTdtV3;
+
+  /// The model used when a streaming request names none.
+  static const SherpaRecognitionModel defaultStreamingModel =
+      streamingZipformerEn;
+
+  /// Whether this model decodes incrementally over a live stream.
+  bool get isStreaming =>
+      kind == SherpaRecognitionModelKind.streamingTransducer;
 }
 
 /// A single-file model downloaded without an archive.
@@ -294,9 +360,11 @@ final class SherpaDiarizationModelPaths {
 
 /// Provider descriptors for the sherpa-onnx catalog.
 ///
-/// Streaming recognition is deliberately absent: sherpa exposes an
-/// `OnlineRecognizer`, but this package does not wire it yet, and a capability
-/// is a promise rather than an aspiration.
+/// Recognition capability is declared per model, not provider-wide: a
+/// streaming Zipformer cannot be batch-decoded and Parakeet cannot be
+/// streamed, so a model that advertised both would be lying about one of them.
+/// The provider-level set is the union, which is what capability routing in
+/// `speech_pipeline` reads.
 SpeechProviderDescriptor buildSherpaDescriptor() {
   final models = <SpeechModelDescriptor>[
     for (final model in SherpaRecognitionModel.all)
@@ -304,9 +372,9 @@ SpeechProviderDescriptor buildSherpaDescriptor() {
         id: model.id,
         providerId: sherpaProviderId,
         displayName: model.displayName,
-        capabilities: const <SpeechCapability>{
-          SpeechCapability.batchSpeechToText,
-        },
+        capabilities: model.isStreaming
+            ? const <SpeechCapability>{SpeechCapability.streamingSpeechToText}
+            : const <SpeechCapability>{SpeechCapability.batchSpeechToText},
         languageTags: model.languageTags,
         isLocal: true,
       ),
@@ -340,6 +408,7 @@ SpeechProviderDescriptor buildSherpaDescriptor() {
     id: sherpaProviderId,
     displayName: 'sherpa-onnx',
     capabilities: const <SpeechCapability>{
+      SpeechCapability.streamingSpeechToText,
       SpeechCapability.batchSpeechToText,
       SpeechCapability.voiceActivityDetection,
       SpeechCapability.diarization,

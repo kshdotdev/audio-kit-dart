@@ -30,6 +30,45 @@ final class SherpaBatchAsrConfiguration {
   final String? languageCode;
 }
 
+/// Native-runtime configuration for streaming recognition.
+final class SherpaStreamingAsrConfiguration {
+  /// Creates a streaming recognizer configuration.
+  const SherpaStreamingAsrConfiguration({
+    required this.paths,
+    required this.numThreads,
+    required this.decodingMethod,
+    required this.provider,
+    required this.enableEndpoint,
+    required this.silenceBeforeSpeechSeconds,
+    required this.silenceAfterSpeechSeconds,
+    required this.maximumUtteranceSeconds,
+  });
+
+  /// Resolved streaming model files.
+  final SherpaRecognitionModelPaths paths;
+
+  /// ONNX Runtime intra-op thread count.
+  final int numThreads;
+
+  /// sherpa decoding method.
+  final String decodingMethod;
+
+  /// ONNX Runtime execution provider.
+  final String provider;
+
+  /// Whether sherpa's rule-based endpointer segments the stream.
+  final bool enableEndpoint;
+
+  /// sherpa endpointing rule 1, in seconds.
+  final double silenceBeforeSpeechSeconds;
+
+  /// sherpa endpointing rule 2, in seconds.
+  final double silenceAfterSpeechSeconds;
+
+  /// sherpa endpointing rule 3, in seconds.
+  final double maximumUtteranceSeconds;
+}
+
 /// Native-runtime configuration for diarization.
 final class SherpaDiarizationConfiguration {
   /// Creates a diarizer configuration.
@@ -127,6 +166,32 @@ final class SherpaDriverTranscript {
   final List<double> timestamps;
 }
 
+/// The decoder state after one incremental streaming step.
+final class SherpaDriverStreamingUpdate {
+  /// Creates a streaming update.
+  const SherpaDriverStreamingUpdate({
+    required this.transcript,
+    required this.isEndpoint,
+  });
+
+  /// An empty update, for a step that produced nothing.
+  static const SherpaDriverStreamingUpdate empty = SherpaDriverStreamingUpdate(
+    transcript: SherpaDriverTranscript(text: ''),
+    isEndpoint: false,
+  );
+
+  /// Hypothesis for the segment currently being decoded.
+  ///
+  /// Replaceable until [isEndpoint] reports the segment closed: sherpa revises
+  /// earlier words as later audio arrives.
+  final SherpaDriverTranscript transcript;
+
+  /// Whether sherpa's rule-based endpointer closed the segment on this step.
+  ///
+  /// A timer over decoder state, not a semantic end-of-utterance decision.
+  final bool isEndpoint;
+}
+
 /// Provider-owned diarization span with its speaker vector.
 final class SherpaDriverSpeakerSpan {
   /// Creates a diarization span.
@@ -177,6 +242,27 @@ abstract interface class SherpaBatchAsrDriver {
   Future<void> close();
 }
 
+/// A live streaming recognizer holding one open decode stream.
+///
+/// Unlike [SherpaBatchAsrDriver], every call mutates state that the next call
+/// depends on, so calls must not overlap: the session serializes them.
+abstract interface class SherpaStreamingAsrDriver {
+  /// Feeds 16 kHz mono samples and decodes every step they made ready.
+  Future<SherpaDriverStreamingUpdate> accept(Float32List samples);
+
+  /// Discards the decoded segment, keeping the recognizer and its features.
+  ///
+  /// Called after a confirmed segment so the next hypothesis starts empty.
+  Future<void> reset();
+
+  /// Marks input finished, drains the decoder, and returns the last
+  /// hypothesis.
+  Future<SherpaDriverStreamingUpdate> finish();
+
+  /// Releases the recognizer, its stream, and its worker.
+  Future<void> close();
+}
+
 /// A loaded diarizer.
 abstract interface class SherpaDiarizationDriver {
   /// Clusters speakers over complete 16 kHz mono audio.
@@ -208,6 +294,11 @@ abstract interface class SherpaRuntime {
     SherpaBatchAsrConfiguration configuration,
   );
 
+  /// Loads a streaming recognizer described by [configuration].
+  Future<SherpaStreamingAsrDriver> createStreamingAsr(
+    SherpaStreamingAsrConfiguration configuration,
+  );
+
   /// Loads a diarizer described by [configuration].
   Future<SherpaDiarizationDriver> createDiarizer(
     SherpaDiarizationConfiguration configuration,
@@ -234,6 +325,24 @@ SherpaBatchAsrConfiguration buildBatchAsrConfiguration({
       ? languageCode
       : null,
 );
+
+/// Converts streaming options into a driver configuration.
+SherpaStreamingAsrConfiguration buildStreamingAsrConfiguration({
+  required SherpaRecognitionModelPaths paths,
+  required SherpaStreamingRecognitionOptions options,
+}) => SherpaStreamingAsrConfiguration(
+  paths: paths,
+  numThreads: options.numThreads,
+  decodingMethod: options.decodingMethod,
+  provider: options.provider,
+  enableEndpoint: options.enableEndpoint,
+  silenceBeforeSpeechSeconds: _seconds(options.silenceBeforeSpeech),
+  silenceAfterSpeechSeconds: _seconds(options.silenceAfterSpeech),
+  maximumUtteranceSeconds: _seconds(options.maximumUtterance),
+);
+
+double _seconds(Duration value) =>
+    value.inMicroseconds / Duration.microsecondsPerSecond;
 
 /// Converts diarization options into a driver configuration.
 SherpaDiarizationConfiguration buildDiarizationConfiguration({

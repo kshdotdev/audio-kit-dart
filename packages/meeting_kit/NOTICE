@@ -1,0 +1,72 @@
+meeting_kit
+Copyright (c) 2026 Kauan Guesser
+
+This package contains code derived from Control Center
+(https://github.com/SamuelAlev/control-center), used under the MIT License:
+
+    MIT License
+
+    Copyright (c) 2026 Samuel Alev
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+Derived components, with their upstream sources:
+
+  lib/src/detection.dart
+      packages/cc_domain/lib/features/meetings/domain/services/
+      meeting_detection.dart
+      (signal kinds and weights, corroboration fusion rule, detection policy,
+       debounced prompt state machine)
+
+  lib/src/conferencing_apps.dart
+      packages/cc_domain/lib/features/meetings/domain/services/
+      conferencing_apps.dart
+      (catalog entries, per-meeting versus persistent distinction, matchers)
+
+  lib/src/signal_collector.dart
+      packages/cc_domain/lib/features/meetings/domain/services/
+      meeting_signal_collector.dart
+      packages/cc_infra/lib/src/meetings/process_meeting_signal_collector.dart
+      (collector contract, error-swallowing compositor, process scan and
+       per-application deduplication)
+
+  lib/src/mic_health.dart
+      packages/cc_domain/lib/features/meetings/domain/services/
+      meeting_mic_health.dart
+      (dead-microphone heuristic, amplitude floors, confirm and recency
+       windows, level smoothing)
+
+  lib/src/lifecycle.dart
+      packages/cc_infra/lib/src/meetings/meeting_recording_session.dart
+      packages/cc_infra/lib/src/meetings/meeting_summary_reconciler.dart
+      (lifecycle statuses, single-finalizer rule, startup sweep recovery)
+
+  lib/src/outcome.dart
+      packages/cc_domain/lib/features/meetings/domain/services/
+      meeting_outcome.dart
+      (output schema, strict and lenient parsers, defensive speaker-name map)
+
+  lib/src/speaker_labels.dart
+      packages/cc_domain/lib/features/meetings/domain/services/
+      meeting_diarization.dart
+      (maximum-overlap speaker assignment, Person N scheme, turn merging with
+       window-boundary deduplication, token containment)
+
+Portions of the accompanying tests are likewise derived from the corresponding
+Control Center test suites.

@@ -86,6 +86,234 @@ abstract base class SherpaManagedSession implements AudioSession {
   }
 }
 
+/// Streaming recognition session backed by a sherpa `OnlineRecognizer`.
+///
+/// Every accepted chunk yields a hypothesis for the segment being decoded,
+/// emitted as a volatile [RecognitionPartial] that replaces the previous one.
+/// When sherpa's endpointer closes the segment the same hypothesis is
+/// re-emitted as a confirmed [RecognitionFinal] and the decoder is reset, so a
+/// consumer can render partials in place and only ever append finals.
+///
+/// Speech-boundary events are deliberately not emitted. sherpa's endpointer is
+/// a silence timer over decoder state, so treating an endpoint as
+/// [RecognitionSpeechEnded] would claim knowledge it does not have; pair this
+/// with the Silero voice-activity session, or an end-of-utterance provider,
+/// when boundaries matter.
+final class SherpaStreamingRecognitionSession extends SherpaManagedSession
+    implements StreamingSpeechToTextSession {
+  /// Creates a streaming session over [driver].
+  SherpaStreamingRecognitionSession({
+    required super.onClosed,
+    required this.format,
+    required SherpaStreamingAsrDriver driver,
+    this.languageTag,
+    AudioCancellationToken? cancellation,
+  }) : _driver = driver, // ignore: prefer_initializing_formals
+       _converter = SherpaMonoConverter(format) {
+    if (cancellation != null) {
+      unawaited(
+        cancellation.whenCancelled.then<void>((_) => abort()).catchError((
+          Object _,
+        ) {
+          // Terminal status already records the cause.
+        }),
+      );
+    }
+  }
+
+  @override
+  final AudioFormat format;
+
+  /// BCP-47 tag stamped onto every transcript this session emits.
+  final String? languageTag;
+
+  final SherpaStreamingAsrDriver _driver;
+  final SherpaMonoConverter _converter;
+  final StreamController<SpeechRecognitionEvent> _results =
+      StreamController<SpeechRecognitionEvent>.broadcast(sync: true);
+  Future<void> _writeTail = Future<void>.value();
+  int _acceptedSamples = 0;
+  int _revision = 0;
+  int _segment = 0;
+  String _partialText = '';
+
+  @override
+  AudioSinkCapabilities get capabilities => AudioSinkCapabilities.sequential;
+
+  @override
+  Stream<SpeechRecognitionEvent> get results => _results.stream;
+
+  /// Offset at the end of the audio decoded so far.
+  Duration get acceptedDuration => AudioFormat(
+    sampleRate: sherpaSampleRate,
+    channels: 1,
+  ).durationForFrames(_acceptedSamples);
+
+  @override
+  Future<void> write(
+    AudioFrame frame, {
+    AudioCancellationToken? cancellationToken,
+  }) {
+    ensureUsable('write to');
+    cancellationToken?.throwIfCancelled();
+    if (status.state == AudioSessionState.prepared) {
+      transition(AudioSessionState.active);
+    }
+    // Serialized because every driver call mutates the decode stream the next
+    // one reads: overlapping accepts would interleave audio into one decoder.
+    return _writeTail = _writeTail.then((_) => _process(frame));
+  }
+
+  Future<void> _process(AudioFrame frame) async {
+    if (isTerminal) {
+      return;
+    }
+    try {
+      for (final converted in _converter.process(frame)) {
+        await _feed(converted);
+      }
+    } on Object catch (error) {
+      await _fail(error);
+      rethrow;
+    }
+  }
+
+  Future<void> _feed(AudioFrame converted) async {
+    final update = await _driver.accept(converted.samples);
+    _acceptedSamples += converted.frameCount;
+    await _handle(update);
+  }
+
+  Future<void> _handle(SherpaDriverStreamingUpdate update) async {
+    final text = update.transcript.text.trim();
+    if (update.isEndpoint) {
+      // The endpoint closes whatever the decoder holds, including a hypothesis
+      // this session already published as a partial: the final replaces it.
+      _emitFinal(text.isEmpty ? _partialText : text);
+      _partialText = '';
+      await _driver.reset();
+      return;
+    }
+    // sherpa re-reports an unchanged hypothesis on every chunk of silence.
+    // Republishing it would make a consumer redraw for no new information.
+    if (text.isEmpty || text == _partialText) {
+      return;
+    }
+    _partialText = text;
+    _revision += 1;
+    _add(
+      RecognitionPartial(
+        transcript: _transcript(text),
+        revision: _revision,
+        at: acceptedDuration,
+      ),
+    );
+  }
+
+  void _emitFinal(String text) {
+    if (text.isEmpty) {
+      return;
+    }
+    _segment += 1;
+    _add(
+      RecognitionFinal(
+        transcript: _transcript(text),
+        segmentId: 'sherpa-$_segment',
+        at: acceptedDuration,
+      ),
+    );
+  }
+
+  SpeechTranscript _transcript(String text) =>
+      SpeechTranscript(text: text, languageTag: languageTag);
+
+  void _add(SpeechRecognitionEvent event) {
+    if (!_results.isClosed) {
+      _results.add(event);
+    }
+  }
+
+  Future<void> _fail(Object error) async {
+    _add(
+      RecognitionFailed(
+        failure: sherpaSpeechFailure(
+          'sherpa_streaming_failed',
+          'streaming',
+          'sherpa-onnx failed to decode the live audio stream.',
+          cause: error,
+        ),
+        at: acceptedDuration,
+      ),
+    );
+    await abort(
+      failure: sherpaAudioFailure(
+        'sherpa_streaming_failed',
+        AudioFailureStage.provider,
+        'The sherpa-onnx streaming session failed.',
+      ),
+    );
+  }
+
+  @override
+  Future<void> finish({AudioCancellationToken? cancellationToken}) async {
+    ensureUsable('finish');
+    cancellationToken?.throwIfCancelled();
+    await _writeTail;
+    if (isTerminal) {
+      return;
+    }
+    try {
+      for (final converted in _converter.flush()) {
+        await _feed(converted);
+      }
+      final tail = await _driver.finish();
+      final text = tail.transcript.text.trim();
+      // An empty tail means the endpointer already closed the last segment;
+      // otherwise the drained hypothesis is the segment nobody confirmed yet.
+      _emitFinal(text.isEmpty ? _partialText : text);
+      _partialText = '';
+    } on Object catch (error) {
+      await _fail(error);
+      rethrow;
+    }
+    transition(AudioSessionState.finished);
+    await close();
+  }
+
+  @override
+  Future<void> abort({AudioFailure? failure}) async {
+    if (isTerminal) {
+      return;
+    }
+    transition(
+      AudioSessionState.aborted,
+      failure:
+          failure ??
+          sherpaAudioFailure(
+            'sherpa_streaming_aborted',
+            AudioFailureStage.provider,
+            'The sherpa-onnx streaming session was aborted.',
+          ),
+    );
+    await close();
+  }
+
+  @override
+  Future<void> close() async {
+    if (status.state == AudioSessionState.closed) {
+      return;
+    }
+    await _driver.close();
+    _converter.reset();
+    if (!_results.isClosed) {
+      await _results.close();
+    }
+    transition(AudioSessionState.closed);
+    await closeStatuses();
+    onClosed(this);
+  }
+}
+
 /// Voice-activity session backed by a sherpa Silero detector.
 final class SherpaVoiceActivitySession extends SherpaManagedSession
     implements VoiceActivityDetectionSession {

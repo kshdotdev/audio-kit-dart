@@ -320,6 +320,7 @@ void main() {
       for (final model in SherpaRecognitionModel.all) {
         switch (model.kind) {
           case SherpaRecognitionModelKind.transducer:
+          case SherpaRecognitionModelKind.streamingTransducer:
             expect(model.joinerFile, isNotNull, reason: model.id);
           case SherpaRecognitionModelKind.whisper:
             expect(model.joinerFile, isNull, reason: model.id);

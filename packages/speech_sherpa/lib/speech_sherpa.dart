@@ -1,9 +1,9 @@
 /// Cross-platform speech provider backed by sherpa-onnx.
 ///
-/// Implements the `speech_core` contracts for batch recognition, voice-activity
-/// detection, diarization, and speaker embeddings on macOS, Windows, Linux,
-/// iOS, and Android — the inference floor for platforms without an on-device
-/// Apple runtime.
+/// Implements the `speech_core` contracts for streaming and batch recognition,
+/// voice-activity detection, diarization, and speaker embeddings on macOS,
+/// Windows, Linux, iOS, and Android — the inference floor for platforms
+/// without an on-device Apple runtime.
 library;
 
 export 'src/conversion.dart' show SherpaCollectedAudio, sherpaSampleRate;
@@ -22,6 +22,7 @@ export 'src/options.dart'
         SherpaDiarizationOptions,
         SherpaRecognitionModelKind,
         SherpaRecognitionOptions,
+        SherpaStreamingRecognitionOptions,
         SherpaVoiceActivityOptions,
         sherpaProviderId;
 export 'src/provider.dart' show SherpaSpeechProvider;
@@ -33,8 +34,12 @@ export 'src/runtime.dart'
         SherpaDiarizationDriver,
         SherpaDriverSpeakerSpan,
         SherpaDriverSpeechSpan,
+        SherpaDriverStreamingUpdate,
         SherpaDriverTranscript,
         SherpaRuntime,
+        SherpaStreamingAsrConfiguration,
+        SherpaStreamingAsrDriver,
         SherpaVadConfiguration,
         SherpaVadDriver;
-export 'src/sessions.dart' show SherpaVoiceActivitySession;
+export 'src/sessions.dart'
+    show SherpaStreamingRecognitionSession, SherpaVoiceActivitySession;

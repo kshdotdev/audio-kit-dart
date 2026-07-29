@@ -1,5 +1,5 @@
 name: speech_sherpa
-description: Cross-platform speech provider over sherpa-onnx - batch STT, VAD, diarization, and speaker embeddings.
+description: Cross-platform speech provider over sherpa-onnx - streaming and batch STT, VAD, diarization, and speaker embeddings.
 version: 0.1.0-dev
 resolution: workspace
 homepage: https://github.com/kshdotdev/audio-kit-dart

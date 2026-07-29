@@ -171,8 +171,11 @@ import `dart:io`.
   PCM playback on Darwin, and system/process capture on macOS 14.4 or newer.
 - The shared Darwin plugin targets macOS 14 and iOS 17; system capture is
   availability-guarded and remains macOS-only.
-- MLX inference requires Apple Silicon. Android, Windows, Linux, echo
-  cancellation, and a full-duplex voice mode are not implemented yet.
+- MLX inference requires Apple Silicon. Android capture is not implemented.
+  Windows and Linux capture/playback implementations exist but are not yet
+  validated on real hardware (Windows C++ is pending its first compile on CI).
+  Echo cancellation (`audio_aec`) and an opt-in full-duplex voice mode are
+  implemented; the AEC native library currently requires a local build.
 - Native Fluid-specific fused routing is intentionally deferred; the generic
   Dart graph is the current correctness path.
 

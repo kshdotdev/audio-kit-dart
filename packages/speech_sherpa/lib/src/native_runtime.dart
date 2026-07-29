@@ -28,8 +28,10 @@ void ensureSherpaBindings([String? libraryDirectory]) {
 ///
 /// Recognition runs on a long-lived worker isolate: a decode is a synchronous
 /// FFI call lasting hundreds of milliseconds to seconds, which would freeze the
-/// UI and starve capture on the main isolate. Diarization uses a throwaway
-/// isolate because it runs once per recording rather than per window.
+/// UI and starve capture on the main isolate. Streaming recognition gets its
+/// own worker of the same shape rather than sharing the batch one — see
+/// [_StreamingAsrWorker]. Diarization uses a throwaway isolate because it runs
+/// once per recording rather than per window.
 final class SherpaNativeRuntime implements SherpaRuntime {
   /// Creates a runtime.
   ///
@@ -62,6 +64,23 @@ final class SherpaNativeRuntime implements SherpaRuntime {
   ) async {
     _ensureOpen();
     final worker = await _AsrWorker.spawn(configuration, libraryDirectory);
+    if (_isClosed) {
+      await worker.close();
+      throw StateError('sherpa-onnx runtime is closed.');
+    }
+    _register(worker);
+    return worker;
+  }
+
+  @override
+  Future<SherpaStreamingAsrDriver> createStreamingAsr(
+    SherpaStreamingAsrConfiguration configuration,
+  ) async {
+    _ensureOpen();
+    final worker = await _StreamingAsrWorker.spawn(
+      configuration,
+      libraryDirectory,
+    );
     if (_isClosed) {
       await worker.close();
       throw StateError('sherpa-onnx runtime is closed.');
@@ -324,6 +343,11 @@ sherpa.OfflineRecognizer _createRecognizer(
       // makes every Parakeet model fail on a 'vocab_size' metadata lookup.
       modelType: '',
     ),
+    SherpaRecognitionModelKind.streamingTransducer => throw sherpaSpeechFailure(
+      'sherpa_model_not_batch_capable',
+      'prepare',
+      'A streaming model cannot be loaded into the batch recognizer.',
+    ),
     SherpaRecognitionModelKind.whisper => sherpa.OfflineModelConfig(
       whisper: sherpa.OfflineWhisperModelConfig(
         encoder: paths.encoder,
@@ -344,6 +368,282 @@ sherpa.OfflineRecognizer _createRecognizer(
     sherpa.OfflineRecognizerConfig(
       model: model,
       decodingMethod: configuration.decodingMethod,
+    ),
+  );
+}
+
+/// Long-lived streaming-recognition worker.
+///
+/// Deliberately a second worker rather than a mode of [_AsrWorker]. Two
+/// differences make sharing worse than duplicating the port plumbing:
+///
+/// 1. A streaming session is stateful across commands. `_AsrWorker` creates
+///    and frees an `OfflineStream` inside one command, so nothing survives it;
+///    here the `OnlineStream` *is* the session, and reset and finish only mean
+///    anything relative to the stream a previous accept fed.
+/// 2. Multiplexing both onto one isolate would queue a batch decode — hundreds
+///    of milliseconds to seconds — ahead of a 100 ms streaming chunk that has
+///    to keep up with real time.
+///
+/// What is shared is the pattern: one isolate for the life of the driver,
+/// commands and responses over ports, an ordered queue of pending completers
+/// so responses match requests, audio crossing as `TransferableTypedData`, and
+/// bindings initialized inside the worker because sherpa resolves its symbols
+/// into isolate-local statics.
+final class _StreamingAsrWorker extends _Closable
+    implements SherpaStreamingAsrDriver {
+  _StreamingAsrWorker._(this._commands, this._responses, this._isolate);
+
+  final SendPort _commands;
+  final ReceivePort _responses;
+  final Isolate _isolate;
+  final Queue<Completer<Object?>> _pending = Queue<Completer<Object?>>();
+  bool _closed = false;
+
+  static Future<_StreamingAsrWorker> spawn(
+    SherpaStreamingAsrConfiguration configuration,
+    String? libraryDirectory,
+  ) async {
+    final initPort = RawReceivePort();
+    final connection = Completer<(ReceivePort, SendPort)>.sync();
+    initPort.handler = (Object? message) {
+      final responses = ReceivePort.fromRawReceivePort(initPort);
+      if (message is _WorkerFailure) {
+        connection.completeError(
+          sherpaSpeechFailure(
+            'sherpa_model_load_failed',
+            'prepare',
+            'The sherpa-onnx streaming recognizer could not be loaded.',
+            cause: message,
+          ),
+        );
+        responses.close();
+        return;
+      }
+      connection.complete((responses, message! as SendPort));
+    };
+
+    final Isolate isolate;
+    try {
+      isolate = await Isolate.spawn(
+        _streamingAsrWorkerEntryPoint,
+        _StreamingAsrWorkerStart(
+          replyTo: initPort.sendPort,
+          configuration: configuration,
+          libraryDirectory: libraryDirectory,
+        ),
+        debugName: 'speech_sherpa.streaming_asr',
+      );
+    } on Object {
+      initPort.close();
+      rethrow;
+    }
+
+    final (responses, commands) = await connection.future;
+    final worker = _StreamingAsrWorker._(commands, responses, isolate);
+    responses.listen(worker._handleResponse);
+    return worker;
+  }
+
+  void _handleResponse(Object? message) {
+    if (_pending.isEmpty) {
+      return;
+    }
+    final completer = _pending.removeFirst();
+    if (message is _WorkerFailure) {
+      completer.completeError(
+        sherpaSpeechFailure(
+          'sherpa_streaming_decode_failed',
+          'streaming',
+          'sherpa-onnx failed to decode the live audio stream.',
+          cause: message,
+        ),
+      );
+      return;
+    }
+    completer.complete(message);
+  }
+
+  Future<Object?> _send(Object? command) {
+    if (_closed) {
+      throw StateError('The sherpa-onnx streaming recognizer is closed.');
+    }
+    final completer = Completer<Object?>();
+    _pending.add(completer);
+    _commands.send(command);
+    return completer.future;
+  }
+
+  Future<SherpaDriverStreamingUpdate> _sendForUpdate(Object? command) async {
+    final response = await _send(command);
+    if (response case final SherpaDriverStreamingUpdate update) {
+      return update;
+    }
+    throw sherpaSpeechFailure(
+      'sherpa_protocol_error',
+      'streaming',
+      'The sherpa-onnx streaming worker returned an unexpected response.',
+    );
+  }
+
+  @override
+  Future<SherpaDriverStreamingUpdate> accept(Float32List samples) =>
+      // TransferableTypedData moves the buffer without copying it.
+      _sendForUpdate(TransferableTypedData.fromList(<Float32List>[samples]));
+
+  @override
+  Future<SherpaDriverStreamingUpdate> finish() =>
+      _sendForUpdate(const _StreamingFinishCommand());
+
+  @override
+  Future<void> reset() async {
+    await _send(const _StreamingResetCommand());
+  }
+
+  @override
+  Future<void> close() async {
+    if (_closed) {
+      return;
+    }
+    _closed = true;
+    _commands.send(null);
+    _responses.close();
+    _isolate.kill(priority: Isolate.beforeNextEvent);
+    while (_pending.isNotEmpty) {
+      _pending.removeFirst().completeError(
+        StateError('The sherpa-onnx streaming recognizer was closed.'),
+      );
+    }
+    onClosed?.call();
+  }
+}
+
+final class _StreamingAsrWorkerStart {
+  const _StreamingAsrWorkerStart({
+    required this.replyTo,
+    required this.configuration,
+    required this.libraryDirectory,
+  });
+
+  final SendPort replyTo;
+  final SherpaStreamingAsrConfiguration configuration;
+  final String? libraryDirectory;
+}
+
+final class _StreamingResetCommand {
+  const _StreamingResetCommand();
+}
+
+final class _StreamingFinishCommand {
+  const _StreamingFinishCommand();
+}
+
+final class _StreamingResetAck {
+  const _StreamingResetAck();
+}
+
+void _streamingAsrWorkerEntryPoint(_StreamingAsrWorkerStart start) {
+  final commands = ReceivePort();
+  final sherpa.OnlineRecognizer recognizer;
+  final sherpa.OnlineStream stream;
+  try {
+    // Isolate-local statics: the worker must bind for itself.
+    ensureSherpaBindings(start.libraryDirectory);
+    recognizer = _createOnlineRecognizer(start.configuration);
+    stream = recognizer.createStream();
+  } catch (error) {
+    start.replyTo.send(_WorkerFailure(error.toString()));
+    commands.close();
+    return;
+  }
+
+  start.replyTo.send(commands.sendPort);
+
+  commands.listen((Object? message) {
+    if (message == null) {
+      stream.free();
+      recognizer.free();
+      commands.close();
+      return;
+    }
+    try {
+      switch (message) {
+        case _StreamingResetCommand():
+          recognizer.reset(stream);
+          start.replyTo.send(const _StreamingResetAck());
+        case _StreamingFinishCommand():
+          // inputFinished releases the decoder's right-context wait, so the
+          // tail of the last chunk is decoded instead of being dropped.
+          stream.inputFinished();
+          start.replyTo.send(_drainOnlineStream(recognizer, stream));
+        case final TransferableTypedData audio:
+          stream.acceptWaveform(
+            samples: audio.materialize().asFloat32List(),
+            sampleRate: 16000,
+          );
+          start.replyTo.send(_drainOnlineStream(recognizer, stream));
+        default:
+          start.replyTo.send(
+            const _WorkerFailure('Unknown streaming command.'),
+          );
+      }
+    } catch (error) {
+      start.replyTo.send(_WorkerFailure(error.toString()));
+    }
+  });
+}
+
+/// Runs every decode step the buffered audio made ready.
+///
+/// The endpoint flag is read before the result on purpose: `getResult` after a
+/// `reset` returns the *next* segment's empty hypothesis, so the caller has to
+/// see the closing text and the flag together, then reset separately.
+SherpaDriverStreamingUpdate _drainOnlineStream(
+  sherpa.OnlineRecognizer recognizer,
+  sherpa.OnlineStream stream,
+) {
+  while (recognizer.isReady(stream)) {
+    recognizer.decode(stream);
+  }
+  final isEndpoint = recognizer.isEndpoint(stream);
+  final result = recognizer.getResult(stream);
+  return SherpaDriverStreamingUpdate(
+    transcript: SherpaDriverTranscript(
+      text: result.text,
+      tokens: result.tokens,
+      timestamps: result.timestamps,
+    ),
+    isEndpoint: isEndpoint,
+  );
+}
+
+sherpa.OnlineRecognizer _createOnlineRecognizer(
+  SherpaStreamingAsrConfiguration configuration,
+) {
+  final paths = configuration.paths;
+  return sherpa.OnlineRecognizer(
+    sherpa.OnlineRecognizerConfig(
+      model: sherpa.OnlineModelConfig(
+        transducer: sherpa.OnlineTransducerModelConfig(
+          encoder: paths.encoder,
+          decoder: paths.decoder,
+          joiner: paths.joiner!,
+        ),
+        tokens: paths.tokens,
+        numThreads: configuration.numThreads,
+        provider: configuration.provider,
+        debug: false,
+        // Empty for the same reason as the offline recognizer: the streaming
+        // exports carry `model_type` metadata, and hardcoding it here picks
+        // the wrong decoder for whichever Zipformer generation it does not
+        // name.
+        modelType: '',
+      ),
+      decodingMethod: configuration.decodingMethod,
+      enableEndpoint: configuration.enableEndpoint,
+      rule1MinTrailingSilence: configuration.silenceBeforeSpeechSeconds,
+      rule2MinTrailingSilence: configuration.silenceAfterSpeechSeconds,
+      rule3MinUtteranceLength: configuration.maximumUtteranceSeconds,
     ),
   );
 }

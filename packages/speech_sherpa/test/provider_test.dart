@@ -70,21 +70,51 @@ void main() {
 
       expect(descriptor.id, sherpaProviderId);
       expect(descriptor.capabilities, <SpeechCapability>{
+        SpeechCapability.streamingSpeechToText,
         SpeechCapability.batchSpeechToText,
         SpeechCapability.voiceActivityDetection,
         SpeechCapability.diarization,
         SpeechCapability.speakerEmbedding,
       });
-      // Streaming exists in sherpa but is not wired here, so it must not be
+      // TTS exists in sherpa but is not wired here, so it must not be
       // advertised: a declared capability is a promise.
-      expect(
-        descriptor.capabilities,
-        isNot(contains(SpeechCapability.streamingSpeechToText)),
-      );
       expect(
         descriptor.capabilities,
         isNot(contains(SpeechCapability.textToSpeech)),
       );
+    });
+
+    test('declares streaming on streaming models only', () {
+      final models = <String, Set<SpeechCapability>>{
+        for (final model in buildProvider().descriptor.models)
+          model.id: model.capabilities,
+      };
+
+      for (final model in SherpaRecognitionModel.streamingModels) {
+        expect(
+          models[model.id],
+          contains(SpeechCapability.streamingSpeechToText),
+          reason: model.id,
+        );
+        // A streaming Zipformer cannot be batch-decoded by OfflineRecognizer.
+        expect(
+          models[model.id],
+          isNot(contains(SpeechCapability.batchSpeechToText)),
+          reason: model.id,
+        );
+      }
+      for (final model in SherpaRecognitionModel.batchModels) {
+        expect(
+          models[model.id],
+          contains(SpeechCapability.batchSpeechToText),
+          reason: model.id,
+        );
+        expect(
+          models[model.id],
+          isNot(contains(SpeechCapability.streamingSpeechToText)),
+          reason: model.id,
+        );
+      }
     });
 
     test('publishes the four recognition models with Parakeet v3 default', () {
@@ -544,6 +574,340 @@ void main() {
       expect(events.first.at, const Duration(seconds: 1));
       expect(events.last, isA<VoiceActivityEnded>());
       expect(events.last.at, const Duration(milliseconds: 1500));
+    });
+  });
+
+  group('streaming recognition', () {
+    final format = AudioFormat(sampleRate: 16000, channels: 1);
+
+    AudioFrame chunk(int index, {int samples = 1600}) => AudioFrame.owned(
+      format: format,
+      // Powers of two so the value survives float32 exactly and identifies
+      // which chunk a buffer came from.
+      samples: Float32List.fromList(
+        List<double>.filled(samples, (index + 1) / 8),
+      ),
+      sourceId: 'src',
+      trackId: 'track',
+      clockId: 'clock',
+      sequence: index,
+      sampleOffset: index * samples,
+      timestamp: Duration(
+        microseconds: index * samples * Duration.microsecondsPerSecond ~/ 16000,
+      ),
+    );
+
+    SherpaDriverStreamingUpdate update(String text, {bool endpoint = false}) =>
+        SherpaDriverStreamingUpdate(
+          transcript: SherpaDriverTranscript(text: text),
+          isEndpoint: endpoint,
+        );
+
+    Future<StreamingSpeechToTextSession> prepare({
+      AudioCancellationToken? cancellation,
+      SpeechRecognitionOptions? options,
+    }) async {
+      installRecognition(SherpaRecognitionModel.streamingZipformerEn);
+      final provider = buildProvider();
+      addTearDown(provider.close);
+      return provider.prepareStreamingRecognition(
+        StreamingRecognitionRequest(
+          inputFormat: format,
+          options: options,
+          cancellation: cancellation,
+        ),
+      );
+    }
+
+    test('fails clearly when the streaming model is not installed', () async {
+      final provider = buildProvider();
+      addTearDown(provider.close);
+
+      await expectLater(
+        provider.prepareStreamingRecognition(
+          StreamingRecognitionRequest(inputFormat: format),
+        ),
+        throwsA(
+          isA<SpeechFailure>().having(
+            (f) => f.code,
+            'code',
+            'sherpa_model_not_installed',
+          ),
+        ),
+      );
+    });
+
+    test('rejects a batch model for a streaming session', () async {
+      // Parakeet is a real catalog entry, but OfflineRecognizer-only: routing
+      // it here would fail inside sherpa instead of at the boundary.
+      installRecognition(SherpaRecognitionModel.parakeetTdtV3);
+      final provider = buildProvider();
+      addTearDown(provider.close);
+
+      await expectLater(
+        provider.prepareStreamingRecognition(
+          StreamingRecognitionRequest(
+            inputFormat: format,
+            options: SpeechRecognitionOptions(
+              modelId: SherpaRecognitionModel.parakeetTdtV3.id,
+            ),
+          ),
+        ),
+        throwsA(
+          isA<SpeechFailure>().having(
+            (f) => f.code,
+            'code',
+            'sherpa_unknown_model',
+          ),
+        ),
+      );
+    });
+
+    test('rejects provider options belonging to the batch path', () async {
+      installRecognition(SherpaRecognitionModel.streamingZipformerEn);
+      final provider = buildProvider();
+      addTearDown(provider.close);
+
+      await expectLater(
+        provider.prepareStreamingRecognition(
+          StreamingRecognitionRequest(
+            inputFormat: format,
+            options: SpeechRecognitionOptions(
+              providerOptions: SherpaRecognitionOptions(),
+            ),
+          ),
+        ),
+        throwsA(
+          isA<SpeechFailure>().having(
+            (f) => f.code,
+            'code',
+            'sherpa_invalid_options',
+          ),
+        ),
+      );
+    });
+
+    test('maps the neutral request onto endpointing rules', () async {
+      final session = await prepare(
+        options: SpeechRecognitionOptions(
+          providerOptions: SherpaStreamingRecognitionOptions(
+            silenceAfterSpeech: const Duration(milliseconds: 800),
+            maximumUtterance: const Duration(seconds: 12),
+          ),
+        ),
+      );
+      addTearDown(session.close);
+
+      final configuration = runtime.streamingConfigurations.single;
+      expect(configuration.enableEndpoint, isTrue);
+      expect(configuration.silenceBeforeSpeechSeconds, closeTo(2.4, 1e-9));
+      expect(configuration.silenceAfterSpeechSeconds, closeTo(0.8, 1e-9));
+      expect(configuration.maximumUtteranceSeconds, closeTo(12, 1e-9));
+      expect(
+        configuration.paths.model.id,
+        SherpaRecognitionModel.streamingZipformerEn.id,
+      );
+    });
+
+    test('emits a volatile partial only when the hypothesis changes', () async {
+      runtime.streamingUpdates = <SherpaDriverStreamingUpdate>[
+        update('hello'),
+        update('hello'),
+        update('hello there'),
+      ];
+      final session = await prepare();
+      final events = <SpeechRecognitionEvent>[];
+      final subscription = session.results.listen(events.add);
+      addTearDown(subscription.cancel);
+
+      for (var i = 0; i < 3; i++) {
+        await session.write(chunk(i));
+      }
+
+      // Three chunks, two distinct hypotheses: the repeat is not republished.
+      expect(events, hasLength(2));
+      expect(events.every((e) => e is RecognitionPartial), isTrue);
+      final partials = events.cast<RecognitionPartial>();
+      expect(partials.map((p) => p.transcript.text), <String>[
+        'hello',
+        'hello there',
+      ]);
+      expect(partials.map((p) => p.revision), <int>[1, 2]);
+      // 1600 samples per chunk at 16 kHz.
+      expect(partials.last.at, const Duration(milliseconds: 300));
+      expect(runtime.streamingDrivers.single.resetCount, isZero);
+    });
+
+    test(
+      'confirms the segment and resets the decoder on an endpoint',
+      () async {
+        runtime.streamingUpdates = <SherpaDriverStreamingUpdate>[
+          update('hello'),
+          update('hello there', endpoint: true),
+          update('next one'),
+        ];
+        final session = await prepare();
+        final events = <SpeechRecognitionEvent>[];
+        final subscription = session.results.listen(events.add);
+        addTearDown(subscription.cancel);
+
+        for (var i = 0; i < 3; i++) {
+          await session.write(chunk(i));
+        }
+
+        expect(events, hasLength(3));
+        expect(events[0], isA<RecognitionPartial>());
+        final confirmed = events[1] as RecognitionFinal;
+        expect(confirmed.transcript.text, 'hello there');
+        expect(confirmed.segmentId, 'sherpa-1');
+        // The next segment restarts the volatile hypothesis rather than
+        // continuing the confirmed one.
+        final resumed = events[2] as RecognitionPartial;
+        expect(resumed.transcript.text, 'next one');
+
+        final driver = runtime.streamingDrivers.single;
+        expect(driver.resetCount, 1);
+        // Reset lands between the endpoint chunk and the next one, so no audio
+        // is decoded into the segment that was just confirmed.
+        expect(driver.calls, <String>['accept', 'accept', 'reset', 'accept']);
+      },
+    );
+
+    test('confirms the drained hypothesis on finish', () async {
+      runtime.streamingUpdates = <SherpaDriverStreamingUpdate>[update('hello')];
+      runtime.streamingFinishUpdate = update('hello world');
+      final session = await prepare();
+      final events = <SpeechRecognitionEvent>[];
+      final subscription = session.results.listen(events.add);
+      addTearDown(subscription.cancel);
+
+      await session.write(chunk(0));
+      await session.finish();
+
+      expect(events.last, isA<RecognitionFinal>());
+      expect((events.last as RecognitionFinal).transcript.text, 'hello world');
+      expect(session.status.state, AudioSessionState.closed);
+      expect(runtime.streamingDrivers.single.closed, isTrue);
+    });
+
+    test('falls back to the last partial when the tail is empty', () async {
+      runtime.streamingUpdates = <SherpaDriverStreamingUpdate>[update('hello')];
+      final session = await prepare();
+      final events = <SpeechRecognitionEvent>[];
+      final subscription = session.results.listen(events.add);
+      addTearDown(subscription.cancel);
+
+      await session.write(chunk(0));
+      await session.finish();
+
+      expect((events.last as RecognitionFinal).transcript.text, 'hello');
+    });
+
+    test(
+      'emits nothing final when the endpoint already closed the tail',
+      () async {
+        runtime.streamingUpdates = <SherpaDriverStreamingUpdate>[
+          update('hello', endpoint: true),
+        ];
+        final session = await prepare();
+        final events = <SpeechRecognitionEvent>[];
+        final subscription = session.results.listen(events.add);
+        addTearDown(subscription.cancel);
+
+        await session.write(chunk(0));
+        await session.finish();
+
+        // One confirmation, not two: finish must not re-confirm a closed
+        // segment just because it has text in hand.
+        expect(events.whereType<RecognitionFinal>(), hasLength(1));
+        expect(
+          events.whereType<RecognitionFinal>().single.segmentId,
+          'sherpa-1',
+        );
+      },
+    );
+
+    test('decodes chunks in write order under concurrent writes', () async {
+      runtime.streamingUpdates = <SherpaDriverStreamingUpdate>[
+        update('one'),
+        update('one two'),
+        update('one two three'),
+      ];
+      // Descending delays: an implementation that let accepts overlap would
+      // resolve the third chunk first.
+      runtime.streamingAcceptDelays = const <Duration>[
+        Duration(milliseconds: 30),
+        Duration(milliseconds: 15),
+        Duration.zero,
+      ];
+      final session = await prepare();
+      final events = <SpeechRecognitionEvent>[];
+      final subscription = session.results.listen(events.add);
+      addTearDown(subscription.cancel);
+
+      await Future.wait(<Future<void>>[
+        for (var i = 0; i < 3; i++) session.write(chunk(i)),
+      ]);
+
+      final driver = runtime.streamingDrivers.single;
+      expect(driver.received.map((s) => s.first), <double>[0.125, 0.25, 0.375]);
+      expect(
+        events.cast<RecognitionPartial>().map((p) => p.transcript.text),
+        <String>['one', 'one two', 'one two three'],
+      );
+    });
+
+    test('cancellation mid-stream aborts and releases the driver', () async {
+      runtime.streamingUpdates = <SherpaDriverStreamingUpdate>[update('hello')];
+      final cancellation = AudioCancellationController();
+      final session = await prepare(cancellation: cancellation.token);
+      final events = <SpeechRecognitionEvent>[];
+      final subscription = session.results.listen(events.add);
+      addTearDown(subscription.cancel);
+
+      await session.write(chunk(0));
+      cancellation.cancel(const AudioCancellation(reason: 'test'));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(session.status.state, AudioSessionState.closed);
+      expect(session.status.failure, isNull);
+      expect(runtime.streamingDrivers.single.closed, isTrue);
+      // The partial observed before cancellation stands; nothing is confirmed.
+      expect(events.whereType<RecognitionPartial>(), hasLength(1));
+      expect(events.whereType<RecognitionFinal>(), isEmpty);
+      expect(() => session.write(chunk(1)), throwsStateError);
+    });
+
+    test('surfaces a decode failure and aborts the session', () async {
+      final session = await prepare();
+      final events = <SpeechRecognitionEvent>[];
+      final subscription = session.results.listen(events.add);
+      addTearDown(subscription.cancel);
+      runtime.streamingDrivers.single.acceptError = StateError('boom');
+
+      await expectLater(session.write(chunk(0)), throwsA(isA<StateError>()));
+
+      expect(events.single, isA<RecognitionFailed>());
+      expect(
+        (events.single as RecognitionFailed).failure.code,
+        'sherpa_streaming_failed',
+      );
+      expect(session.status.state, AudioSessionState.closed);
+      expect(runtime.streamingDrivers.single.closed, isTrue);
+    });
+
+    test('stamps the model language on every transcript', () async {
+      runtime.streamingUpdates = <SherpaDriverStreamingUpdate>[
+        update('hello', endpoint: true),
+      ];
+      final session = await prepare();
+      final events = <SpeechRecognitionEvent>[];
+      final subscription = session.results.listen(events.add);
+      addTearDown(subscription.cancel);
+
+      await session.write(chunk(0));
+
+      expect((events.single as RecognitionFinal).transcript.languageTag, 'en');
     });
   });
 

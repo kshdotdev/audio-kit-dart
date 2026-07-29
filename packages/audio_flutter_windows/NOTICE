@@ -1,0 +1,59 @@
+audio_flutter_windows
+Copyright (c) 2026 Kauan Guesser
+
+This package contains code derived from Control Center
+(https://github.com/SamuelAlev/control-center), used under the MIT License:
+
+    MIT License
+
+    Copyright (c) 2026 Samuel Alev
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+Derived components, with their upstream sources:
+
+  windows/audio_format.cpp, windows/audio_format.h
+      packages/system_audio_capture/windows/system_audio_capture_plugin.cpp
+      (mix-format detection for IEEE float and integer PCM, the interleaved
+       mono down-mix including 24-bit sign extension and unsigned-8 centering,
+       and the phase-continuous linear resampler with its rationale)
+
+  windows/capture_session.cpp
+      packages/system_audio_capture/windows/system_audio_capture_plugin.cpp
+      (the WASAPI shared-mode loopback initialisation sequence, reading the
+       endpoint mix format rather than assuming it, the 200 ms buffer request,
+       the MMCSS "Pro Audio" registration, the poll cadence of half the buffer
+       clamped to 5-100 ms and split into 5 ms slices for bounded stop latency,
+       and the AUDCLNT_BUFFERFLAGS_SILENT zero-fill)
+
+  windows/audio_flutter_windows_plugin.cpp
+      packages/system_audio_capture/windows/system_audio_capture_plugin.cpp
+      (render endpoint enumeration with PKEY_Device_FriendlyName, and the
+       platform-thread task queue drained from a top-level window proc)
+
+  windows/CMakeLists.txt
+      packages/system_audio_capture/windows/CMakeLists.txt
+      (plugin target layout, NOMINMAX, and the link set)
+
+The Windows SDK header-ordering hazard documented in these files was also first
+recorded upstream.
+
+The pull-model session lifecycle, the bounded frame ring and its drop
+accounting, the stall watchdog, the COM RAII wrappers, the playback render path,
+and the entire Dart layer are original to this package.
