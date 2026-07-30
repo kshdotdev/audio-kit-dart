@@ -17,7 +17,11 @@ readonly package_dirs=(
   packages/speech_deepgram
   packages/speech_openai_tts
   packages/speech_fluidaudio
+  packages/speech_sherpa
   packages/speech_mlx
+  packages/audio_flutter_linux
+  packages/audio_flutter_windows
+  packages/audio_aec
   packages/voice_flutter
 )
 

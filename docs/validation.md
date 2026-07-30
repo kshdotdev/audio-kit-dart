@@ -5,7 +5,7 @@
 From the Audio Kit workspace:
 
 ```sh
-cd /Users/kauan/Projects/my/audio-kit-dart
+cd /Users/kauan/Projects/kshdotdev/audio-kit-dart
 ./tool/verify.sh
 ```
 
@@ -76,7 +76,7 @@ The migrated app is a concrete macOS host for the federated plugin and graph
 composition:
 
 ```sh
-cd /Users/kauan/Projects/my/flutter-app
+cd /Users/kauan/Projects/kshdotdev/flutter-app
 flutter pub get
 flutter analyze lib test
 flutter test
@@ -101,7 +101,7 @@ microphone permission, devices, playback timing, or any macOS-only process tap.
 FluidAudio:
 
 ```sh
-cd /Users/kauan/Projects/my/fluidaudio-dart
+cd /Users/kauan/Projects/kshdotdev/fluidaudio-dart
 flutter pub get
 flutter analyze
 flutter test
@@ -110,7 +110,7 @@ flutter test
 MLX Audio:
 
 ```sh
-cd /Users/kauan/Projects/my/mlx-audio
+cd /Users/kauan/Projects/kshdotdev/mlx
 make setup
 dart analyze
 make test
@@ -123,7 +123,7 @@ These default commands do not imply that large real-model suites ran.
 Real FluidAudio inference requires a macOS device and model assets:
 
 ```sh
-cd /Users/kauan/Projects/my/fluidaudio-dart/example
+cd /Users/kauan/Projects/kshdotdev/fluidaudio-dart/example
 flutter test integration_test/plugin_integration_test.dart -d macos
 FLUIDAUDIO_RUN_MODELS=1 \
   flutter test integration_test/real_models_test.dart -d macos
@@ -133,7 +133,7 @@ MLX checkpoint tests are tagged and skipped by default because they may
 download large assets and require Apple Silicon:
 
 ```sh
-cd /Users/kauan/Projects/my/mlx-audio/packages/mlx_audio
+cd /Users/kauan/Projects/kshdotdev/mlx/packages/mlx_audio
 dart test -t e2e --run-skipped
 dart test -t weights --run-skipped
 ```

@@ -103,11 +103,17 @@ final class CaptureFrameAssembler {
   private var sampleOffset: Int64 = 0
   private var anchorTimestampMicros: Int64?
   private var pendingDroppedFrames: Int64 = 0
+  private var pendingDiscontinuityReason: DiscontinuityReasonMessage?
   private var sourceRestartPending = false
   private var lastEmittedEndTimestampMicros: Int64?
   private let statisticsLock = NSLock()
   private var callbackCount: Int64 = 0
   private var nonZeroFrameCount: Int64 = 0
+  private var sampleCount: Int64 = 0
+  private var peakAmplitude: Float = 0
+  private var sumSquares: Double = 0
+  private var firstAudioAtMicros: Int64?
+  private let createdAtMicros = MonotonicClock.microseconds()
 
   init(
     sessionId: Int64,
@@ -130,10 +136,25 @@ final class CaptureFrameAssembler {
 
   /// Returns false if the capture must fail because the mailbox overflowed.
   func push(_ samples: [Float], timestampMicros: Int64? = nil) -> Bool {
+    // One pass over the buffer feeds every level statistic; the health stream
+    // reads them at its own low rate.
+    var peak: Float = 0
+    var squares: Double = 0
+    for sample in samples {
+      let magnitude = abs(sample)
+      if magnitude > peak { peak = magnitude }
+      squares += Double(sample) * Double(sample)
+    }
     statisticsLock.lock()
     callbackCount += 1
-    if samples.contains(where: { $0 != 0 }) {
+    sampleCount += Int64(samples.count)
+    sumSquares += squares
+    if peak > peakAmplitude { peakAmplitude = peak }
+    if peak > 0 {
       nonZeroFrameCount += 1
+      if firstAudioAtMicros == nil {
+        firstAudioAtMicros = MonotonicClock.microseconds() - createdAtMicros
+      }
     }
     statisticsLock.unlock()
     if anchorTimestampMicros == nil {
@@ -152,10 +173,12 @@ final class CaptureFrameAssembler {
         sampleOffset: sampleOffset,
         timestampMicros: timestampMicros,
         float32Samples: AudioTypedData.encode(payload),
-        droppedFramesBefore: pendingDroppedFrames
+        droppedFramesBefore: pendingDroppedFrames,
+        discontinuityReason: pendingDiscontinuityReason
       )
       guard mailbox.push(frame) else { return false }
       pendingDroppedFrames = 0
+      pendingDiscontinuityReason = nil
       lastEmittedEndTimestampMicros =
         timestampMicros
         + Int64(samplesPerFrame / channelCount) * 1_000_000
@@ -187,7 +210,8 @@ final class CaptureFrameAssembler {
       sourceRestartPending = false
       noteDropped(
         durationMicros: max(driftMicros, 1),
-        startTimestampMicros: expectedTimestampMicros
+        startTimestampMicros: expectedTimestampMicros,
+        reason: .sourceRestart
       )
       return true
     }
@@ -225,9 +249,15 @@ final class CaptureFrameAssembler {
   /// the reported dropped range as well.
   func noteDropped(
     durationMicros: Int64,
-    startTimestampMicros: Int64?
+    startTimestampMicros: Int64?,
+    reason: DiscontinuityReasonMessage = .droppedFrames
   ) {
     guard durationMicros > 0 else { return }
+    // A restart explains the whole gap it opens, so it outranks a plain drop
+    // reported for the same pending range.
+    if pendingDiscontinuityReason == nil || reason == .sourceRestart {
+      pendingDiscontinuityReason = reason
+    }
     if anchorTimestampMicros == nil {
       anchorTimestampMicros =
         startTimestampMicros ?? MonotonicClock.microseconds()
@@ -252,9 +282,38 @@ final class CaptureFrameAssembler {
     pendingDroppedFrames += droppedOutputFrames
   }
 
-  func statistics() -> (callbackCount: Int64, nonZeroFrameCount: Int64) {
+  func statistics() -> CaptureStatistics {
     statisticsLock.lock()
     defer { statisticsLock.unlock() }
-    return (callbackCount, nonZeroFrameCount)
+    return CaptureStatistics(
+      callbackCount: callbackCount,
+      nonZeroFrameCount: nonZeroFrameCount,
+      peakAmplitude: Double(peakAmplitude),
+      rms: sampleCount > 0 ? (sumSquares / Double(sampleCount)).squareRoot() : 0,
+      nonZeroFramePercent: callbackCount > 0
+        ? Double(nonZeroFrameCount) * 100 / Double(callbackCount)
+        : 0,
+      firstAudioAtMillis: firstAudioAtMicros.map { $0 / 1_000 }
+    )
   }
+}
+
+/// Level and liveness statistics accumulated by a `CaptureFrameAssembler`.
+///
+/// Read at the health stream's low rate, never per frame. `renderCycles` is
+/// not here: it counts hardware callbacks, including buffers dropped before
+/// they ever reached the assembler, so each capture session owns that counter.
+struct CaptureStatistics {
+  /// Converted buffers pushed into the assembler.
+  let callbackCount: Int64
+  /// Pushed buffers that carried at least one non-zero sample.
+  let nonZeroFrameCount: Int64
+  /// Largest absolute sample seen, 0...1 nominal.
+  let peakAmplitude: Double
+  /// Root mean square over every sample pushed so far.
+  let rms: Double
+  /// `nonZeroFrameCount` as a percentage of `callbackCount`.
+  let nonZeroFramePercent: Double
+  /// Milliseconds from assembler creation to the first non-zero buffer.
+  let firstAudioAtMillis: Int64?
 }

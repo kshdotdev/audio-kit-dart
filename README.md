@@ -29,6 +29,16 @@ from this workspace so applications can compose only the layers they need.
 The portable core is pure Dart. Flutter, platform-channel, native model,
 network, and provider SDK dependencies remain in integration packages.
 
+The conversation and meeting intelligence layer lives in the sibling
+[conversation-kit-dart](https://github.com/kshdotdev/conversation-kit-dart)
+workspace: `speech_pipeline`, `turn_detection`, `transcript_kit`,
+`meeting_kit`, and `conversation_core`. Those packages consume the contracts
+published here — transcript assembly, speaker identity, turn boundaries,
+question detection, dictation logic, and meeting detection are deliberately
+out of scope for this repo, which stops at audio and speech I/O and the
+provider adapters. That workspace is internal and does not publish to pub.dev;
+this repository is the published half of the stack.
+
 ## Install and compose
 
 Add only the packages required by the application:
@@ -171,8 +181,11 @@ import `dart:io`.
   PCM playback on Darwin, and system/process capture on macOS 14.4 or newer.
 - The shared Darwin plugin targets macOS 14 and iOS 17; system capture is
   availability-guarded and remains macOS-only.
-- MLX inference requires Apple Silicon. Android, Windows, Linux, echo
-  cancellation, and a full-duplex voice mode are not implemented yet.
+- MLX inference requires Apple Silicon. Android capture is not implemented.
+  Windows and Linux capture/playback implementations exist but are not yet
+  validated on real hardware (Windows C++ is pending its first compile on CI).
+  Echo cancellation (`audio_aec`) and an opt-in full-duplex voice mode are
+  implemented; the AEC native library currently requires a local build.
 - Native Fluid-specific fused routing is intentionally deferred; the generic
   Dart graph is the current correctness path.
 

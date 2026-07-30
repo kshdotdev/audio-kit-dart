@@ -1,0 +1,4 @@
+# Build output of tool/build_native.sh. Native artifacts are never committed:
+# they are large, architecture-specific, and — on macOS — would need signing and
+# notarization to be redistributable. See README "Native library (risk R4)".
+.native/

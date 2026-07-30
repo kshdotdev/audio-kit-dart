@@ -43,8 +43,25 @@ only inside the runtime.
 6. `GraphLiveAudioBackend` and `GraphDictationAudioBackend` are the app
    defaults. Riverpod composes the runtime and optional routes; no Riverpod type
    crosses into Audio Kit.
-7. The existing transcript reducer, question detection, formatting commands,
-   and other SDK-free app-domain behavior remain outside provider adapters.
+7. The transcript reducer, question detection, and the dictation state machine
+   have moved out of the app into `conversation_core`. That layer was never
+   provider-specific — it reads transcripts, not audio — and keeping it in the
+   app made it unreusable rather than decoupled. `conversation_core` and
+   `turn_detection` live in the sibling
+   [conversation-kit-dart](https://github.com/kshdotdev/conversation-kit-dart)
+   repository, not in this workspace. `conversation_core` is pure
+   Dart over `speech_core` and `turn_detection`: `LiveTranscriptStore`,
+   `UtteranceSegmenter`, `QuestionGate`, `ClassifierChain` (over a
+   host-neutral `QuestionDetectorStrategy`), `AutoFirePolicy`,
+   `QuestionDetectionCoordinator`, `QuestionDetectionPrompts` with the
+   transcript fence, and `DictationManager` behind a `DictationHost` seam.
+   What stays in the app is what is genuinely app-shaped: the Riverpod
+   providers and notifier wrappers, the settings enums (mapped onto the
+   package's neutral ones), formatting commands, recording paths, permission
+   prompts and text injection, `dictation_audio_backend.dart`, the live
+   transcription engine, and the LLM-provider classifier binding. Each moved
+   file left a re-export shim at its old path, so no Riverpod type crosses into
+   Audio Kit and no app call site had to move with it.
 8. The FluidAudio CocoaPods version matches the plugin version, and the
    concrete-backend app tests exercise the graph-backed default rather than
    relying only on feature fakes.

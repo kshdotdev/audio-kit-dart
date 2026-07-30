@@ -1,3 +1,6 @@
+import 'descriptors.dart';
+import 'embedding.dart';
+
 /// Time range within an audio session.
 final class SpeechTimeRange {
   SpeechTimeRange({required this.start, required this.end}) {
@@ -70,6 +73,7 @@ final class SpeakerSegment {
     required this.speakerId,
     required this.range,
     this.confidence,
+    this.embedding,
   }) {
     if (speakerId.trim().isEmpty) {
       throw ArgumentError.value(speakerId, 'speakerId', 'Must not be empty.');
@@ -85,6 +89,14 @@ final class SpeakerSegment {
 
   /// Confidence in the inclusive range 0–1.
   final double? confidence;
+
+  /// Speaker vector for this segment, when the provider declares
+  /// [SpeechCapability.speakerEmbedding].
+  ///
+  /// Null for providers that only forward speaker labels. This is what makes a
+  /// [speakerId] — a label stable within one session — resolvable to a saved
+  /// voice profile across sessions.
+  final SpeakerEmbedding? embedding;
 }
 
 void _validateConfidence(double? confidence) {

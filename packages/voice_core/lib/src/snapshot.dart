@@ -1,4 +1,5 @@
 import 'backend.dart';
+import 'duplex.dart';
 import 'failure.dart';
 
 /// Lifecycle of the complete voice session.
@@ -13,6 +14,7 @@ final class VoiceConversationSnapshot {
     required this.sessionState,
     required this.turnState,
     required this.generationId,
+    this.duplexMode = VoiceDuplexMode.halfDuplex,
     this.interimTranscript = '',
     this.finalTranscript = '',
     this.responseText = '',
@@ -28,6 +30,15 @@ final class VoiceConversationSnapshot {
 
   /// Current generation. Events from lower generations are stale.
   final int generationId;
+
+  /// Duplex mode actually in effect for this conversation.
+  ///
+  /// Constant for the controller's lifetime and resolved before the session
+  /// starts, so a listener that requested full duplex and sees
+  /// [VoiceDuplexMode.halfDuplex] here is looking at a degradation — normally
+  /// because no echo canceller was available. `VoiceDuplexConfig.isDegraded`
+  /// says so directly.
+  final VoiceDuplexMode duplexMode;
 
   /// Replaceable user recognition hypothesis.
   final String interimTranscript;
@@ -56,6 +67,7 @@ final class VoiceConversationSnapshot {
     VoiceSessionState? sessionState,
     VoiceTurnState? turnState,
     int? generationId,
+    VoiceDuplexMode? duplexMode,
     String? interimTranscript,
     String? finalTranscript,
     String? responseText,
@@ -67,6 +79,7 @@ final class VoiceConversationSnapshot {
     sessionState: sessionState ?? this.sessionState,
     turnState: turnState ?? this.turnState,
     generationId: generationId ?? this.generationId,
+    duplexMode: duplexMode ?? this.duplexMode,
     interimTranscript: interimTranscript ?? this.interimTranscript,
     finalTranscript: finalTranscript ?? this.finalTranscript,
     responseText: responseText ?? this.responseText,

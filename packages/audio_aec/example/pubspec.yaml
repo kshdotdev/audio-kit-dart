@@ -1,0 +1,38 @@
+name: audio_aec_example
+description: >-
+  Consumer-side proof that audio_aec's build hook supplies the native library.
+  Deliberately OUTSIDE the repository workspace: user-defines are read from the
+  workspace-root pubspec.yaml, so this file has to be a root to carry them.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  audio_aec:
+    path: ../
+
+dev_dependencies:
+  test: ^1.26.3
+
+# Being outside the workspace means a plain `path` dependency on audio_aec still
+# pulls its siblings from pub.dev, where the published 0.1.0 APIs predate this
+# checkout. Override them to the working tree so the example builds what is
+# actually here.
+dependency_overrides:
+  audio_core:
+    path: ../../audio_core
+  audio_processing:
+    path: ../../audio_processing
+
+# The knobs `hook/build.dart` reads. `prebuilt` is a path resolved against THIS
+# file, which is why the example can name the gitignored build output without
+# hard-coding anyone's home directory.
+#
+# Run packages/audio_aec/tool/build_native.sh first; without it there is nothing
+# at ../.native/ and the hook correctly registers no asset (the test then skips).
+hooks:
+  user_defines:
+    audio_aec:
+      prebuilt: ../.native/libaec_ffi.dylib

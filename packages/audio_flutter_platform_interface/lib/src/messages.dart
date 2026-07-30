@@ -6,6 +6,28 @@ enum PlatformCaptureKind { microphone, systemAudio }
 /// Overflow action for the bounded native capture mailbox.
 enum PlatformCaptureOverflowPolicy { dropOldest, dropNewest, failCapture }
 
+/// Why the source timeline broke immediately before a platform frame.
+enum PlatformAudioDiscontinuityReason {
+  droppedFrames,
+  sourceRestart,
+  clockReset,
+  formatChange,
+  unknown,
+}
+
+/// Platform-reported microphone authorization, mirroring the Apple states.
+enum PlatformMicrophonePermissionStatus {
+  /// The user has not been asked yet; a request can still show the prompt.
+  notDetermined,
+  granted,
+
+  /// Explicitly refused. Only the user can change this, in system settings.
+  denied,
+
+  /// Blocked by policy (managed device, parental controls). Not requestable.
+  restricted,
+}
+
 /// Low-frequency lifecycle state reported independently from audio frames.
 enum PlatformAudioSessionPhase {
   prepared,
@@ -91,6 +113,7 @@ final class PlatformAudioFrame {
     required this.timestamp,
     required this.samples,
     this.droppedFramesBefore = 0,
+    this.discontinuityReason,
   }) : assert(droppedFramesBefore >= 0);
 
   final int sessionId;
@@ -101,6 +124,12 @@ final class PlatformAudioFrame {
 
   /// Frames removed by the native mailbox immediately before this frame.
   final int droppedFramesBefore;
+
+  /// Why continuity broke before this frame, when the platform reports it.
+  ///
+  /// Null means the platform said nothing: a frame with
+  /// [droppedFramesBefore] > 0 and no reason is still a dropped-frame gap.
+  final PlatformAudioDiscontinuityReason? discontinuityReason;
 }
 
 /// A bounded native mailbox read.
@@ -123,6 +152,11 @@ final class PlatformAudioSessionEvent {
     this.message,
     this.receivingAudio,
     this.callbackCount,
+    this.peakAmplitude,
+    this.rms,
+    this.nonZeroFramePercent,
+    this.renderCycles,
+    this.firstAudioAtMillis,
   });
 
   final int sessionId;
@@ -131,6 +165,22 @@ final class PlatformAudioSessionEvent {
   final String? message;
   final bool? receivingAudio;
   final int? callbackCount;
+
+  /// Largest absolute sample seen since the session started, 0...1 nominal.
+  final double? peakAmplitude;
+
+  /// Root mean square over every sample delivered since the session started.
+  final double? rms;
+
+  /// Percentage of delivered callback buffers that carried non-zero audio.
+  final double? nonZeroFramePercent;
+
+  /// Hardware render callbacks delivered, including buffers a bounded queue
+  /// dropped before conversion. Always at least [callbackCount].
+  final int? renderCycles;
+
+  /// Milliseconds from session creation to the first non-zero buffer.
+  final int? firstAudioAtMillis;
 }
 
 /// Core Audio process that may be selected for system capture.

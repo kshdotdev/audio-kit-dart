@@ -1,0 +1,118 @@
+audio_aec
+Copyright (c) 2026 Kauan Guesser
+
+This package contains code adapted from Control Center
+(https://github.com/SamuelAlev/control-center), used under the MIT License:
+
+    Copyright (c) 2026 Samuel Alev
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+    IN THE SOFTWARE.
+
+Adapted files:
+
+  native/aec_ffi.cc
+    from packages/cc_natives/native/aec_ffi.cc
+    The six-symbol C ABI is preserved symbol-for-symbol; comments are rewritten
+    for Audio Kit's near/far terminology.
+
+  lib/src/bindings.dart
+    from packages/cc_natives/lib/src/audio/aec/aec_ffi_bindings.dart and
+    packages/cc_natives/lib/src/native_library.dart
+    The raw symbol surface is unchanged. Library resolution is reworked from an
+    application-support data directory to explicit path -> environment variable
+    -> conventional locations beside the executable, and the probe failure is a
+    structured AecUnavailable carrying the paths tried.
+
+  lib/src/processor.dart
+    from packages/cc_natives/lib/src/audio/aec/aec_processor.dart
+    Blocks are Int16List rather than Uint8List (Audio Kit converts float32 at
+    the block boundary, so no byte order is named); the block-size contract
+    throws instead of asserting; AecEngine additionally carries sampleRate and
+    blockFrames so a composing filter can reject a mismatched format.
+
+  lib/src/mic_filter.dart
+    from lib/features/meetings/data/services/aec_mic_filter.dart
+    The four stream-orchestration policies — eager never-paused consumption,
+    the reference-availability zero-pad gate, fail-safe passthrough until lock,
+    and lock-once-track-forever — are carried over with their constants
+    (80 ms target lead, 0.55 lock confidence, 500 ms delay clamp, 500 ms
+    calibration interval). Reshaped from a pair of Stream<Uint8List> transforms
+    into a single AudioSource that owns both capture sessions, with Audio Kit's
+    lifecycle, cancellation, and frame metadata around them. Block accumulation
+    and delay estimation are not reimplemented here; they are
+    AecBlockAccumulator and AecDelayEstimator in audio_processing.
+
+  tool/build_native.sh
+    from scripts/natives/build_aec.sh and scripts/natives/lib/natives_common.sh
+    Inlined the three shared helpers it used; installs into a package-local,
+    gitignored .native/ directory instead of an application-support root.
+
+Portions of the accompanying test suite are likewise adapted from Control
+Center's tests for the same components.
+
+--------------------------------------------------------------------------------
+
+The native library that tool/build_native.sh produces, and the C ABI in
+native/aec_ffi.cc that it is derived from, build against
+webrtc-audio-processing v2.1
+(https://gitlab.freedesktop.org/pulseaudio/webrtc-audio-processing), which
+packages WebRTC's audio processing module. No WebRTC source is vendored into
+this repository; the build script fetches it at a pinned revision. WebRTC is
+used under the following BSD 3-Clause license:
+
+    Copyright (c) 2011, The WebRTC project authors. All rights reserved.
+
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions are
+    met:
+
+      * Redistributions of source code must retain the above copyright
+        notice, this list of conditions and the following disclaimer.
+
+      * Redistributions in binary form must reproduce the above copyright
+        notice, this list of conditions and the following disclaimer in
+        the documentation and/or other materials provided with the
+        distribution.
+
+      * Neither the name of Google nor the names of its contributors may
+        be used to endorse or promote products derived from this software
+        without specific prior written permission.
+
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+    "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+    A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+    HOLDERS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+    SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+    LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+    DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+    THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+WebRTC additionally distributes an "Additional IP Rights Grant (Patents)" file
+alongside that license; see the PATENTS file in the upstream WebRTC repository.
+
+BINARY DISTRIBUTION. The BSD 3-Clause notice above must accompany any binary
+redistribution of a library built by tool/build_native.sh. That build also
+statically links Abseil (https://github.com/abseil/abseil-cpp, Apache License
+2.0) from the upstream meson wrap, so a redistributed binary needs Abseil's
+notice as well. Because this package does not currently ship a binary — see
+"Native library (risk R4)" in the README — that obligation falls on whoever
+builds and distributes one.

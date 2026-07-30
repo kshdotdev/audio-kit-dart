@@ -13,6 +13,10 @@ readonly package_dirs=(
   packages/audio_processing
   packages/speech_core
   packages/audio_flutter_darwin
+  packages/audio_flutter_linux
+  packages/audio_flutter_windows
+  packages/audio_aec
+  packages/speech_sherpa
   packages/audio_flutter
   packages/voice_core
   packages/speech_deepgram

@@ -155,6 +155,21 @@ final class FluidNativeRuntime implements FluidAudioRuntime {
   }
 
   @override
+  Future<FluidItnDriver> createItn() async {
+    _ensureOpen();
+    final normalizer = native.FluidItn();
+    if (!await normalizer.isNativeAvailable()) {
+      throw StateError(
+        'The FluidAudio inverse text normalization library is unavailable.',
+      );
+    }
+    if (_isClosed) {
+      throw StateError('FluidAudio runtime is closed.');
+    }
+    return _register<_NativeItnDriver>(_NativeItnDriver(normalizer));
+  }
+
+  @override
   Future<FluidVadDriver> createVad({
     required double threshold,
     required Duration minimumSilence,
@@ -384,12 +399,63 @@ final class _NativeDiarizationDriver extends _NativeDriver
           start: segment.start,
           end: segment.end,
           confidence: segment.qualityScore,
+          embedding: segment.embedding,
         ),
     ];
   }
 
   @override
   Future<void> closeNative() => _diarizer.dispose();
+}
+
+final class _NativeItnDriver extends _NativeDriver
+    implements FluidTranscriptItnDriver {
+  _NativeItnDriver(this._normalizer);
+
+  final native.FluidItn _normalizer;
+
+  @override
+  Future<String> normalizeSentence(String text) =>
+      _normalizer.normalizeSentence(text);
+
+  @override
+  Future<String> normalizeTranscript({
+    required String text,
+    required List<FluidDriverTokenTiming> timings,
+  }) async {
+    // `FluidAsrResult` is the shape FluidAudio's ITN host accepts for a whole
+    // transcription, but only the text and the token timings take part in
+    // normalization: the confidence, the durations and the token IDs are
+    // echoed back unread. Neutral values go over the wire rather than invented
+    // ones, and the caller keeps the real confidence on the Dart side.
+    final normalized = await _normalizer.normalizeResult(
+      native.FluidAsrResult(
+        text: text,
+        confidence: 0,
+        duration: Duration.zero,
+        processingTime: Duration.zero,
+        tokenTimings: <native.FluidTokenTiming>[
+          for (final timing in timings)
+            native.FluidTokenTiming(
+              token: timing.text,
+              tokenId: 0,
+              start: timing.start,
+              end: timing.end,
+              confidence: timing.confidence,
+            ),
+        ],
+      ),
+    );
+    return normalized.text;
+  }
+
+  @override
+  Future<void> addRule({required String spoken, required String written}) =>
+      _normalizer.addRule(spoken: spoken, written: written);
+
+  /// `FluidItn` holds no disposable native handle, so releasing it is a no-op.
+  @override
+  Future<void> closeNative() async {}
 }
 
 abstract base class _NativeTtsDriver extends _NativeDriver

@@ -1,4 +1,7 @@
 /// Capabilities a speech provider or model can advertise.
+///
+/// Append new members at the end, and serialize by `name` rather than `index`
+/// anywhere a capability set is persisted.
 enum SpeechCapability {
   streamingSpeechToText,
   batchSpeechToText,
@@ -6,6 +9,24 @@ enum SpeechCapability {
   voiceActivityDetection,
   endOfUtterance,
   diarization,
+
+  /// Exposes the speaker vectors behind diarization, not only the labels.
+  ///
+  /// Separate from [diarization] on purpose: a provider can cluster speakers
+  /// without surfacing vectors, so declaring [diarization] says nothing about
+  /// whether `SpeakerSegment.embedding` will be populated.
+  speakerEmbedding,
+
+  /// Converts spoken-form text to written form, such as `twenty five dollars`
+  /// to `$25`.
+  inverseTextNormalization,
+
+  /// Scores whether a window of speech ended a conversational turn.
+  ///
+  /// Distinct from [endOfUtterance], which reports that speech stopped: this
+  /// answers whether the speaker was *finished*, which is the difference
+  /// between waiting through a mid-sentence pause and interrupting.
+  turnCompletion,
 }
 
 /// Metadata for a provider-neutral speech model.

@@ -26,6 +26,10 @@ final class MicrophoneCaptureSession: NativeCaptureSession {
   private let lifecycle = NSLock()
   private let running = OSAllocatedUnfairLock(initialState: false)
   private let failureScheduled = OSAllocatedUnfairLock(initialState: false)
+  #if os(macOS)
+    private let holdsActivity = OSAllocatedUnfairLock(initialState: false)
+  #endif
+  private let renderCycles = OSAllocatedUnfairLock(initialState: Int64(0))
   private var assembler: CaptureFrameAssembler?
   private var converter: PersistentAudioConverter?
   private var recorder: RawAudioRecorder?
@@ -127,6 +131,7 @@ final class MicrophoneCaptureSession: NativeCaptureSession {
     input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) {
       [weak self] buffer, time in
       guard let self, self.running.withLock({ $0 }) else { return }
+      self.renderCycles.withLock { $0 += 1 }
       guard let copy = AudioBufferCopy.copy(buffer) else { return }
       let timestampMicros =
         time.isHostTimeValid
@@ -153,6 +158,7 @@ final class MicrophoneCaptureSession: NativeCaptureSession {
       #endif
       throw error
     }
+    setActivityHold(true)
     events.emit(
       AudioSessionEventMessage(
         sessionId: sessionId,
@@ -174,7 +180,12 @@ final class MicrophoneCaptureSession: NativeCaptureSession {
             ? nil
             : "Microphone is active but has not produced non-zero audio",
           receivingAudio: statistics.nonZeroFrameCount > 0,
-          callbackCount: statistics.callbackCount
+          callbackCount: statistics.callbackCount,
+          peakAmplitude: statistics.peakAmplitude,
+          rms: statistics.rms,
+          nonZeroFramePercent: statistics.nonZeroFramePercent,
+          renderCycles: self.renderCycles.withLock { $0 },
+          firstAudioAtMillis: statistics.firstAudioAtMillis
         )
       )
     }
@@ -197,6 +208,7 @@ final class MicrophoneCaptureSession: NativeCaptureSession {
     recorder?.close()
     recorder = nil
     running.withLock { $0 = false }
+    setActivityHold(false)
     let failed = failureScheduled.withLock { $0 }
     mailbox.finish(discardBuffered: discardBuffered || failed)
     #if os(iOS)
@@ -245,6 +257,25 @@ final class MicrophoneCaptureSession: NativeCaptureSession {
     DispatchQueue.global(qos: .userInitiated).async { [weak self] in
       self?.stop(discardBuffered: true)
     }
+  }
+
+  /// Holds the process-wide App Nap assertion while this session captures.
+  /// Idempotent, so repeated stops and `deinit` cannot unbalance the refcount.
+  /// No-op on iOS, which has no App Nap.
+  private func setActivityHold(_ held: Bool) {
+    #if os(macOS)
+      let changed = holdsActivity.withLock { current -> Bool in
+        guard current != held else { return false }
+        current = held
+        return true
+      }
+      guard changed else { return }
+      if held {
+        CaptureActivity.shared.acquire()
+      } else {
+        CaptureActivity.shared.release()
+      }
+    #endif
   }
 
   deinit {

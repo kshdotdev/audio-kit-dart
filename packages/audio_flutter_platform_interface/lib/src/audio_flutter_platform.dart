@@ -39,9 +39,56 @@ abstract class AudioFlutterPlatform extends PlatformInterface {
 
   Future<void> disposeCapture(int sessionId);
 
+  /// Whether this platform can capture system audio at all.
+  ///
+  /// A capability answer, not a permission answer: `true` means the mechanism
+  /// exists on this OS version, never that a capture will produce audio. See
+  /// [requestSystemAudioCapturePermission] for why the grant is advisory.
   Future<bool> isSystemAudioCaptureSupported();
 
+  /// Requests the system-audio capture grant, reporting whether it appears to
+  /// be held.
+  ///
+  /// Advisory. On macOS the grant is enforced when audio is delivered rather
+  /// than when the capture is created, so an ungranted process can still build
+  /// a valid-looking capture that is fed silence — this may report `true`
+  /// optimistically. The authoritative signal is capture health: a session that
+  /// reaches a running phase with `receivingAudio` false is silent, and one
+  /// that stays silent fails with `SystemCaptureDead`. Treat `false` as
+  /// conclusive, treat `true` as a hint, and keep observing session events
+  /// after the capture starts.
   Future<bool> requestSystemAudioCapturePermission();
+
+  /// Reports the microphone authorization without prompting.
+  ///
+  /// Implementations added this after 0.1.0, so the default body throws
+  /// [UnimplementedError] rather than widening the abstract surface: a
+  /// platform package built against the older contract keeps compiling, and
+  /// callers treat the throw as "this platform has no permission gate".
+  Future<PlatformMicrophonePermissionStatus> microphonePermissionStatus() =>
+      throw UnimplementedError(
+        'microphonePermissionStatus() is not implemented on this platform',
+      );
+
+  /// Prompts for microphone access when the status is still undetermined and
+  /// reports the resulting status.
+  ///
+  /// Never re-prompts: a denied or restricted status is returned unchanged,
+  /// because only the user (or an administrator) can lift it. Carries the same
+  /// [UnimplementedError] default as [microphonePermissionStatus].
+  Future<PlatformMicrophonePermissionStatus> requestMicrophonePermission() =>
+      throw UnimplementedError(
+        'requestMicrophonePermission() is not implemented on this platform',
+      );
+
+  /// Destroys private capture devices this plugin leaked in an earlier run,
+  /// returning how many were reclaimed.
+  ///
+  /// A process killed mid-capture cannot unwind its own devices. Same
+  /// [UnimplementedError] default as the microphone permission pair.
+  Future<int> cleanupOrphanedCaptureDevices() => throw UnimplementedError(
+    'cleanupOrphanedCaptureDevices() is not implemented on this platform',
+  );
 
   Future<List<PlatformAudioInputDevice>> listAudioInputDevices();
 

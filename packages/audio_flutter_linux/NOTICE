@@ -1,0 +1,42 @@
+audio_flutter_linux
+Copyright (c) 2026 Kauan Guesser
+
+This package contains code derived from Control Center
+(https://github.com/SamuelAlev/control-center), used under the MIT License:
+
+    MIT License
+
+    Copyright (c) 2026 Samuel Alev
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+Derived components, with their upstream sources:
+
+  lib/src/pulse_commands.dart
+      packages/system_audio_capture/lib/system_audio_capture.dart
+      (parecord/pw-record argument sets, `pactl list sources short` parsing,
+       default-sink monitor resolution)
+
+  lib/src/capture_session.dart
+      packages/system_audio_capture/lib/system_audio_capture.dart
+      (capture-tool fallback order, monitor targeting, and the rule that the
+       child's stderr is always drained so the pipe cannot block it)
+
+The playback path, the pull-model session lifecycle, the bounded frame ring,
+the stall watchdog, and the WAV recording sink are original to this package.

@@ -1,0 +1,31 @@
+name: audio_flutter_example
+description: Desktop host app that compiles and exercises every audio_flutter platform implementation.
+publish_to: none
+version: 1.0.0+1
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+  flutter: ">=3.44.0"
+
+dependencies:
+  audio_core: ^0.1.0
+  audio_flutter: ^0.1.0
+  # audio_flutter endorses Darwin and Linux but not Windows, so the host app
+  # depends on the Windows implementation directly. That direct dependency is
+  # what pulls windows/CMakeLists.txt into the app build and compiles the
+  # WASAPI C++.
+  audio_flutter_windows: ^0.1.0
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  # Imported only by tool/pulse_capture_smoke.dart, which drives the Linux
+  # platform implementation directly against a live sound server.
+  audio_flutter_linux: ^0.1.0
+  audio_flutter_platform_interface: ^0.1.0
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

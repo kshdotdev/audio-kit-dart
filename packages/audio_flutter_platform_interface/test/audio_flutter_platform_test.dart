@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:audio_flutter_platform_interface/audio_flutter_platform_interface.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -25,6 +27,52 @@ void main() {
       );
     },
   );
+
+  test(
+    'capabilities added after 0.1.0 stay optional for implementations',
+    () async {
+      // A platform package written against the older contract inherits these
+      // rather than failing to compile, so callers must treat the throw as
+      // "this platform has no such gate" and not as a denial.
+      expect(
+        AudioFlutterPlatform.instance.microphonePermissionStatus,
+        throwsUnimplementedError,
+      );
+      expect(
+        AudioFlutterPlatform.instance.requestMicrophonePermission,
+        throwsUnimplementedError,
+      );
+      expect(
+        AudioFlutterPlatform.instance.cleanupOrphanedCaptureDevices,
+        throwsUnimplementedError,
+      );
+    },
+  );
+
+  test('platform frames report continuity only when it broke', () {
+    final PlatformAudioFrame continuous = PlatformAudioFrame(
+      sessionId: 1,
+      sequence: 0,
+      sampleOffset: 0,
+      timestamp: Duration.zero,
+      samples: Float32List(1),
+    );
+    final PlatformAudioFrame restarted = PlatformAudioFrame(
+      sessionId: 1,
+      sequence: 1,
+      sampleOffset: 1,
+      timestamp: const Duration(milliseconds: 100),
+      samples: Float32List(1),
+      discontinuityReason: PlatformAudioDiscontinuityReason.sourceRestart,
+    );
+
+    expect(continuous.discontinuityReason, isNull);
+    expect(continuous.droppedFramesBefore, 0);
+    expect(
+      restarted.discontinuityReason,
+      PlatformAudioDiscontinuityReason.sourceRestart,
+    );
+  });
 
   test('platform PCM format has value semantics', () {
     expect(

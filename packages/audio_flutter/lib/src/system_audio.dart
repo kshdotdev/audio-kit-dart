@@ -59,6 +59,43 @@ final class FlutterSystemAudio {
     }
   }
 
+  /// Destroys private capture devices this plugin leaked in an earlier run,
+  /// returning how many were reclaimed.
+  ///
+  /// Call it once at app start, before the first capture. A process killed
+  /// mid-capture (crash, `kill -9`, a debugger stop) cannot unwind the private
+  /// aggregate device its system tap runs on, and those devices accumulate in
+  /// the audio server across runs. Only devices this plugin created are
+  /// touched, and never one a live session still owns, so the call is safe at
+  /// any time — but running it while other captures are active in this process
+  /// is pointless, since their devices are exactly the ones it skips.
+  ///
+  /// Returns 0 on platforms with no such devices to reclaim.
+  Future<int> cleanupOrphanedCaptureDevices({
+    AudioCancellationToken? cancellationToken,
+  }) async {
+    cancellationToken?.throwIfCancelled();
+    try {
+      final int destroyed = await _platform.cleanupOrphanedCaptureDevices();
+      cancellationToken?.throwIfCancelled();
+      return destroyed;
+    } on AudioCancelledException {
+      rethrow;
+    } on UnimplementedError {
+      // Platforms endorsed before this API existed leak nothing to reclaim.
+      return 0;
+    } catch (error, stackTrace) {
+      Error.throwWithStackTrace(
+        _systemAudioFailure(
+          error,
+          code: 'platform_capture_device_cleanup_failed',
+          message: 'Orphaned capture devices could not be reclaimed.',
+        ),
+        stackTrace,
+      );
+    }
+  }
+
   Future<List<AudioCaptureProcess>> listProcesses({
     AudioCancellationToken? cancellationToken,
   }) async {

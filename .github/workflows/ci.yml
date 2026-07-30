@@ -5,6 +5,13 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      run_pulse_integration:
+        description: >-
+          Run the real PulseAudio capture smoke test on the Linux runner.
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -19,6 +26,16 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The committed pubspec_overrides.yaml resolves fluidaudio_dart and
+      # mlx_audio from sibling checkouts because the workspace compiles against
+      # their unreleased 0.4.0 / 0.2.1 surfaces. Clone the siblings on CI until
+      # those versions are on pub.dev, then delete this step together with the
+      # overrides file.
+      - name: Clone unpublished sibling engines
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/kshdotdev/fluidaudio-dart ../fluidaudio-dart
+          git clone --depth 1 https://github.com/kshdotdev/mlx ../mlx
       - uses: flutter-actions/setup-flutter@18c66a64fb6f6d3338c63cabbc5cd6da395e7f1d
         with:
           version: 3.44.0
@@ -29,3 +46,203 @@ jobs:
         run: ./tool/verify.sh
       - name: Validate publish archives
         run: ./tool/publish_dry_run.sh
+
+  # Compiles packages/audio_flutter_windows/windows/*.cpp for the first time.
+  # The WASAPI plugin was written on macOS against the Windows SDK headers by
+  # reference only, so this job is expected to surface porting errors before it
+  # ever goes green; keep it a job of its own so its failures are unambiguous.
+  windows-desktop:
+    name: Windows desktop
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The committed pubspec_overrides.yaml resolves fluidaudio_dart and
+      # mlx_audio from sibling checkouts because the workspace compiles against
+      # their unreleased 0.4.0 / 0.2.1 surfaces. Clone the siblings on CI until
+      # those versions are on pub.dev, then delete this step together with the
+      # overrides file.
+      - name: Clone unpublished sibling engines
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/kshdotdev/fluidaudio-dart ../fluidaudio-dart
+          git clone --depth 1 https://github.com/kshdotdev/mlx ../mlx
+      - uses: flutter-actions/setup-flutter@18c66a64fb6f6d3338c63cabbc5cd6da395e7f1d
+        with:
+          version: 3.44.0
+          channel: stable
+          cache: true
+          cache-sdk: true
+      - name: Resolve workspace
+        run: flutter pub get
+      - name: Build example app
+        working-directory: packages/audio_flutter/example
+        run: flutter build windows --debug
+      - name: Test audio_flutter_windows
+        run: flutter test packages/audio_flutter_windows/test
+      - name: Test host-portable packages
+        run: >-
+          flutter test
+          packages/audio_core/test
+          packages/audio_flutter_platform_interface/test
+          packages/audio_flutter/test
+          packages/audio_kit_graph/test
+          packages/audio_processing/test
+          packages/speech_core/test
+
+  # audio_flutter_linux carries no native code, so the value here is the GTK
+  # shell link plus proof that the Dart-only registrant is picked up for the
+  # linux target at all.
+  linux-desktop:
+    name: Linux desktop
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The committed pubspec_overrides.yaml resolves fluidaudio_dart and
+      # mlx_audio from sibling checkouts because the workspace compiles against
+      # their unreleased 0.4.0 / 0.2.1 surfaces. Clone the siblings on CI until
+      # those versions are on pub.dev, then delete this step together with the
+      # overrides file.
+      - name: Clone unpublished sibling engines
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/kshdotdev/fluidaudio-dart ../fluidaudio-dart
+          git clone --depth 1 https://github.com/kshdotdev/mlx ../mlx
+      - name: Install Flutter Linux desktop and PulseAudio prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes \
+            clang \
+            cmake \
+            libgtk-3-dev \
+            liblzma-dev \
+            ninja-build \
+            pkg-config \
+            pulseaudio \
+            pulseaudio-utils
+      - uses: flutter-actions/setup-flutter@18c66a64fb6f6d3338c63cabbc5cd6da395e7f1d
+        with:
+          version: 3.44.0
+          channel: stable
+          cache: true
+          cache-sdk: true
+      - name: Resolve workspace
+        run: flutter pub get
+      - name: Build example app
+        working-directory: packages/audio_flutter/example
+        run: flutter build linux --debug
+      - name: Test audio_flutter_linux
+        run: flutter test packages/audio_flutter_linux/test
+      - name: Test host-portable packages
+        run: >-
+          flutter test
+          packages/audio_core/test
+          packages/audio_flutter_platform_interface/test
+          packages/audio_flutter/test
+          packages/audio_kit_graph/test
+          packages/audio_processing/test
+          packages/speech_core/test
+
+  # Deliberately manual. See .github/workflows/README.md for why this is not on
+  # the pull-request path: it has never been run, it depends on a sound daemon
+  # the runner image does not ship configured, and a hosted-image rollout can
+  # change PulseAudio's availability underneath it. When it is dispatched, its
+  # failure is a real failure -- no continue-on-error, no soft assertions.
+  linux-pulse-capture:
+    name: Linux PulseAudio capture (manual)
+    if: github.event_name == 'workflow_dispatch' && inputs.run_pulse_integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      XDG_RUNTIME_DIR: /tmp/pulse-runtime
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The committed pubspec_overrides.yaml resolves fluidaudio_dart and
+      # mlx_audio from sibling checkouts because the workspace compiles against
+      # their unreleased 0.4.0 / 0.2.1 surfaces. Clone the siblings on CI until
+      # those versions are on pub.dev, then delete this step together with the
+      # overrides file.
+      - name: Clone unpublished sibling engines
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/kshdotdev/fluidaudio-dart ../fluidaudio-dart
+          git clone --depth 1 https://github.com/kshdotdev/mlx ../mlx
+      - name: Install PulseAudio
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes \
+            pulseaudio \
+            pulseaudio-utils
+      - uses: flutter-actions/setup-flutter@18c66a64fb6f6d3338c63cabbc5cd6da395e7f1d
+        with:
+          version: 3.44.0
+          channel: stable
+          cache: true
+          cache-sdk: true
+      - name: Resolve workspace
+        run: flutter pub get
+      - name: Start a PulseAudio daemon with a null sink
+        run: |
+          set -euo pipefail
+          mkdir -p "$XDG_RUNTIME_DIR"
+          pulseaudio --check ||
+            pulseaudio --start --exit-idle-time=-1 --disallow-exit
+          for _ in $(seq 1 20); do
+            if pactl info >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          pactl info
+          pactl load-module module-null-sink \
+            sink_name=ci_sink \
+            sink_properties=device.description=ci_sink
+          pactl set-default-sink ci_sink
+          pactl list sources short
+      # Connecting a recording stream to a monitor resumes the null sink, which
+      # then renders silence on its own timer. The assertion is that frames
+      # arrive at the expected cadence, not that they are non-zero.
+      - name: Capture two seconds from the null sink monitor
+        working-directory: packages/audio_flutter/example
+        run: >-
+          dart run tool/pulse_capture_smoke.dart
+          --source ci_sink.monitor
+          --seconds 2
+      - name: Stop the PulseAudio daemon
+        if: always()
+        run: pulseaudio --kill || true
+
+  # The repository had no macOS runner. The Darwin plugin is a Swift package
+  # that only a real xcodebuild compiles, so this is the counterpart to the
+  # Windows job for audio_flutter_darwin.
+  macos-desktop:
+    name: macOS desktop
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The committed pubspec_overrides.yaml resolves fluidaudio_dart and
+      # mlx_audio from sibling checkouts because the workspace compiles against
+      # their unreleased 0.4.0 / 0.2.1 surfaces. Clone the siblings on CI until
+      # those versions are on pub.dev, then delete this step together with the
+      # overrides file.
+      - name: Clone unpublished sibling engines
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/kshdotdev/fluidaudio-dart ../fluidaudio-dart
+          git clone --depth 1 https://github.com/kshdotdev/mlx ../mlx
+      - uses: flutter-actions/setup-flutter@18c66a64fb6f6d3338c63cabbc5cd6da395e7f1d
+        with:
+          version: 3.44.0
+          channel: stable
+          cache: true
+          cache-sdk: true
+      - name: Resolve workspace
+        run: flutter pub get
+      - name: Build example app
+        working-directory: packages/audio_flutter/example
+        run: flutter build macos --debug

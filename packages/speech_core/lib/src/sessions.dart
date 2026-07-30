@@ -59,12 +59,29 @@ abstract interface class EndOfUtteranceProvider implements SpeechProvider {
 }
 
 /// A streaming speaker-diarization session.
+///
+/// **RESERVED — no adapter implements this yet.** It is a declared shape, not
+/// a supported capability: nothing in this repository returns a
+/// [DiarizationSession], and `SpeechCapability.diarization` on a provider today
+/// means [BatchDiarizationProvider] only. Callers must not treat the capability
+/// flag as a promise that [DiarizationProvider.prepareDiarization] exists.
+///
+/// The contract may change before the first implementation lands. Streaming
+/// diarization has to answer questions batch diarization never faces — whether
+/// a speaker label may be revised after it is emitted, how far back a
+/// re-clustering pass may reach, what a partial segment means at the live edge
+/// — and those answers belong to the adapter that first has to give them.
+/// Implementing against this shape now means implementing against a guess.
 abstract interface class DiarizationSession implements AudioSinkSession {
   /// Typed speaker segmentation updates.
   Stream<DiarizationEvent> get events;
 }
 
 /// Provider capable of streaming speaker diarization.
+///
+/// **RESERVED — no adapter implements this yet.** See [DiarizationSession] for
+/// what that means and why the contract may still change. Use
+/// [BatchDiarizationProvider] for diarization that works today.
 abstract interface class DiarizationProvider implements SpeechProvider {
   /// Prepares a session. Consumers may subscribe before writing the first frame.
   Future<DiarizationSession> prepareDiarization(DiarizationRequest request);

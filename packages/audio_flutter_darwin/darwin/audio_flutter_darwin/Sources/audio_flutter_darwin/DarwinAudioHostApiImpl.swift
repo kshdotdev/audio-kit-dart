@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 
 #if os(iOS)
@@ -214,6 +215,56 @@ final class DarwinAudioHostApiImpl: DarwinAudioHostApi {
       }
     #endif
     completion(.success(false))
+  }
+
+  func microphonePermissionStatus(
+    completion: @escaping (Result<MicrophonePermissionStatusMessage, Error>) -> Void
+  ) {
+    completion(
+      .success(Self.permission(AVCaptureDevice.authorizationStatus(for: .audio)))
+    )
+  }
+
+  /// `requestAccess` prompts only while the status is `.notDetermined`; for
+  /// every other status it returns the standing answer without UI, so this
+  /// reads the status first and reports it unchanged.
+  func requestMicrophonePermission(
+    completion: @escaping (Result<MicrophonePermissionStatusMessage, Error>) -> Void
+  ) {
+    let status = AVCaptureDevice.authorizationStatus(for: .audio)
+    guard status == .notDetermined else {
+      completion(.success(Self.permission(status)))
+      return
+    }
+    AVCaptureDevice.requestAccess(for: .audio) { granted in
+      completion(.success(granted ? .granted : .denied))
+    }
+  }
+
+  private static func permission(
+    _ status: AVAuthorizationStatus
+  ) -> MicrophonePermissionStatusMessage {
+    switch status {
+    case .authorized: return .granted
+    case .denied: return .denied
+    case .restricted: return .restricted
+    case .notDetermined: return .notDetermined
+    @unknown default: return .denied
+    }
+  }
+
+  func cleanupOrphanedAggregateDevices(
+    completion: @escaping (Result<Int64, Error>) -> Void
+  ) {
+    #if os(macOS)
+      if #available(macOS 14.4, *) {
+        completion(
+          .success(SystemAudioCaptureSession.cleanupOrphanedAggregateDevices())
+        )
+        return
+      }
+    #endif
+    completion(.success(0))
   }
 
   func listAudioProcesses(

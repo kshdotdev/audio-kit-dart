@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:audio_core/audio_core.dart';
 import 'package:audio_flutter_platform_interface/audio_flutter_platform_interface.dart';
 
+import 'permissions.dart';
+
 /// Physical Flutter capture source.
 enum AudioCaptureType { microphone, systemAudio }
 
@@ -29,14 +31,48 @@ final class FlutterAudioCaptureHealth {
     this.message,
     this.receivingAudio,
     this.callbackCount,
+    this.peakAmplitude,
+    this.rms,
+    this.nonZeroFramePercent,
+    this.renderCycles,
+    this.firstAudioAtMillis,
   });
 
   final FlutterAudioCaptureHealthPhase phase;
   final Duration timestamp;
   final String? code;
   final String? message;
+
+  /// Whether the source has produced non-zero audio, when the platform knows.
   final bool? receivingAudio;
+
+  /// Buffers the platform has delivered into its own rechunking stage.
   final int? callbackCount;
+
+  /// Largest absolute sample seen since the session started, 0...1 nominal.
+  ///
+  /// Together with [rms] this separates "silent because nobody is speaking"
+  /// from "silent because the wrong source is tapped": a live tap on a quiet
+  /// room still reports a small non-zero peak.
+  final double? peakAmplitude;
+
+  /// Root mean square over every sample delivered since the session started.
+  final double? rms;
+
+  /// Percentage of delivered buffers that carried non-zero audio.
+  final double? nonZeroFramePercent;
+
+  /// Hardware render callbacks, including buffers dropped before conversion.
+  ///
+  /// Zero while [callbackCount] is also zero means the device never ran at
+  /// all, which is a different fault from a running device delivering silence.
+  final int? renderCycles;
+
+  /// Milliseconds from session creation to the first non-zero buffer.
+  ///
+  /// Null while no audio has arrived. Two captures started together expose
+  /// their start skew here; see the README's mic-delay recipe.
+  final int? firstAudioAtMillis;
 }
 
 /// Prepared Flutter capture with a low-frequency health stream.
@@ -126,6 +162,7 @@ final class FlutterAudioCaptureSource implements AudioSource {
     AudioCancellationToken? cancellationToken,
   }) async {
     cancellationToken?.throwIfCancelled();
+    await _requireMicrophonePermission(cancellationToken);
     final PlatformCaptureSessionInfo info;
     try {
       info = await _platform.prepareCapture(
@@ -187,6 +224,37 @@ final class FlutterAudioCaptureSource implements AudioSource {
       }
       Error.throwWithStackTrace(error, stackTrace);
     }
+  }
+
+  /// Fails a microphone capture the platform has already refused.
+  ///
+  /// Without this the engine starts, the session reaches a running phase, and
+  /// the app receives an endless stream of zeroes — the failure mode the
+  /// health stream can only report several seconds later. A platform with no
+  /// permission API (or a still-undetermined status, which the system prompt
+  /// resolves at start) is not blocked here.
+  Future<void> _requireMicrophonePermission(
+    AudioCancellationToken? cancellationToken,
+  ) async {
+    if (config.type != AudioCaptureType.microphone) {
+      return;
+    }
+    final AudioMicrophonePermissionStatus status =
+        await FlutterMicrophonePermission(
+          platform: _platform,
+        ).status(cancellationToken: cancellationToken);
+    if (!status.blocksCapture) {
+      return;
+    }
+    throw AudioFailure(
+      code: 'microphone_permission_denied',
+      stage: AudioFailureStage.capture,
+      message: status == AudioMicrophonePermissionStatus.restricted
+          ? 'Microphone access is restricted by policy on this device.'
+          : 'Microphone access was denied for this app.',
+      // Only the user, in system settings, can change this answer.
+      retryable: false,
+    );
   }
 }
 
@@ -376,17 +444,7 @@ final class _FlutterAudioCaptureSession implements FlutterAudioCaptureSession {
               sequence: frame.sequence,
               sampleOffset: frame.sampleOffset,
               timestamp: frame.timestamp,
-              discontinuity: frame.droppedFramesBefore == 0
-                  ? null
-                  : AudioDiscontinuity(
-                      reason: AudioDiscontinuityReason.droppedFrames,
-                      droppedFrameCount: frame.droppedFramesBefore,
-                      previousSequence:
-                          frame.sequence - frame.droppedFramesBefore - 1 < 0
-                          ? null
-                          : frame.sequence - frame.droppedFramesBefore - 1,
-                      description: 'Native capture mailbox overflow',
-                    ),
+              discontinuity: _discontinuity(frame),
             ),
           );
         }
@@ -578,6 +636,11 @@ final class _FlutterAudioCaptureSession implements FlutterAudioCaptureSession {
           message: event.message,
           receivingAudio: event.receivingAudio,
           callbackCount: event.callbackCount,
+          peakAmplitude: event.peakAmplitude,
+          rms: event.rms,
+          nonZeroFramePercent: event.nonZeroFramePercent,
+          renderCycles: event.renderCycles,
+          firstAudioAtMillis: event.firstAudioAtMillis,
         ),
       );
     }
@@ -700,6 +763,41 @@ final class _FlutterAudioCaptureSession implements FlutterAudioCaptureSession {
       state == AudioSessionState.aborted ||
       state == AudioSessionState.failed ||
       state == AudioSessionState.closed;
+}
+
+/// Continuity metadata for one platform frame, or null when it continues the
+/// previous one.
+///
+/// A frame can carry a reason without a frame count: a capture chain rebuilt
+/// against a new output device loses no queued frame, but the audio after the
+/// gap is not a continuation of the audio before it.
+AudioDiscontinuity? _discontinuity(PlatformAudioFrame frame) {
+  final PlatformAudioDiscontinuityReason? reason = frame.discontinuityReason;
+  if (frame.droppedFramesBefore == 0 && reason == null) {
+    return null;
+  }
+  final int previousSequence = frame.sequence - frame.droppedFramesBefore - 1;
+  return AudioDiscontinuity(
+    reason: switch (reason) {
+      null || PlatformAudioDiscontinuityReason.droppedFrames =>
+        AudioDiscontinuityReason.droppedFrames,
+      PlatformAudioDiscontinuityReason.sourceRestart =>
+        AudioDiscontinuityReason.sourceRestart,
+      PlatformAudioDiscontinuityReason.clockReset =>
+        AudioDiscontinuityReason.clockReset,
+      PlatformAudioDiscontinuityReason.formatChange =>
+        AudioDiscontinuityReason.formatChange,
+      PlatformAudioDiscontinuityReason.unknown =>
+        AudioDiscontinuityReason.unknown,
+    },
+    droppedFrameCount: frame.droppedFramesBefore,
+    previousSequence: previousSequence < 0 ? null : previousSequence,
+    description: switch (reason) {
+      PlatformAudioDiscontinuityReason.sourceRestart =>
+        'Native capture chain restarted',
+      _ => 'Native capture mailbox overflow',
+    },
+  );
 }
 
 AudioFailure _captureFailure(

@@ -168,6 +168,89 @@ void main() {
       );
     });
   });
+
+  group('BatchRecognitionSegment words', () {
+    SpeechWord word(String text, int startMs, int endMs) => SpeechWord(
+      text: text,
+      range: SpeechTimeRange(
+        start: Duration(milliseconds: startMs),
+        end: Duration(milliseconds: endMs),
+      ),
+    );
+
+    test('defaults to empty for providers without timings', () {
+      final segment = BatchRecognitionSegment(
+        text: 'hello there',
+        start: Duration.zero,
+        end: const Duration(seconds: 2),
+      );
+
+      expect(segment.words, isEmpty);
+    });
+
+    test('copies the words so later mutation cannot corrupt it', () {
+      final words = <SpeechWord>[word('hello', 0, 400)];
+      final segment = BatchRecognitionSegment(
+        text: 'hello there',
+        start: Duration.zero,
+        end: const Duration(seconds: 2),
+        words: words,
+      );
+
+      words.add(word('there', 500, 900));
+
+      expect(segment.words, hasLength(1));
+      expect(segment.words.single.text, 'hello');
+      expect(
+        () => segment.words.add(word('there', 500, 900)),
+        throwsUnsupportedError,
+      );
+    });
+
+    test('keeps word offsets on the segment timeline', () {
+      final segment = BatchRecognitionSegment(
+        text: 'hello there',
+        start: Duration.zero,
+        end: const Duration(seconds: 2),
+        words: <SpeechWord>[word('hello', 0, 400), word('there', 500, 900)],
+      );
+
+      expect(segment.words.map((w) => w.range.start), <Duration>[
+        Duration.zero,
+        const Duration(milliseconds: 500),
+      ]);
+      expect(segment.words.last.range.end, const Duration(milliseconds: 900));
+    });
+  });
+
+  group('SpeechAudioGuards', () {
+    // The Swift oracle drops dictation audio shorter than 16,000 samples at
+    // 16 kHz (DictationManager.swift:148) — one second exactly.
+    test('pins the minimum recognition duration at one second', () {
+      expect(
+        SpeechAudioGuards.minimumRecognitionDuration,
+        const Duration(seconds: 1),
+      );
+      expect(
+        SpeechAudioGuards.minimumRecognitionDuration.inMicroseconds *
+            16000 ~/
+            Duration.microsecondsPerSecond,
+        16000,
+      );
+    });
+
+    test('exposes a failure code that SpeechFailure accepts', () {
+      expect(SpeechAudioGuards.audioTooShortCode, 'speech_audio_too_short');
+      expect(
+        SpeechFailure(
+          code: SpeechAudioGuards.audioTooShortCode,
+          stage: 'recognition',
+          safeMessage: 'Recognition needs at least one second of audio.',
+        ).code,
+        'speech_audio_too_short',
+      );
+    });
+  });
 }
 
 final class _FakeProvider implements SpeechProvider {

@@ -232,6 +232,7 @@ final class FluidDriverSpeakerSegment {
     required this.start,
     required this.end,
     this.confidence,
+    this.embedding,
   });
 
   /// Stable label within this result.
@@ -245,6 +246,10 @@ final class FluidDriverSpeakerSegment {
 
   /// Segment quality estimate.
   final double? confidence;
+
+  /// Raw speaker vector reported by the diarizer, before the provider attaches
+  /// its embedding-space provenance. Null when the runtime did not supply one.
+  final Float32List? embedding;
 }
 
 /// Native driver used by one batch diarization operation.
@@ -294,6 +299,42 @@ abstract interface class FluidTtsDriver {
   Future<void> close();
 }
 
+/// Native driver used by inverse text normalization.
+abstract interface class FluidItnDriver {
+  /// Normalizes one span of spoken-form text to written form.
+  Future<String> normalizeSentence(String text);
+
+  /// Registers a custom spoken-to-written replacement.
+  Future<void> addRule({required String spoken, required String written});
+
+  /// Immediately releases native resources. Must be idempotent.
+  Future<void> close();
+}
+
+/// Native driver whose normalization takes a whole transcript, not a sentence.
+///
+/// A refinement of [FluidItnDriver] rather than a member on it, mirroring how
+/// `speech_core` refines `InverseTextNormalizer` into
+/// `TranscriptInverseTextNormalizer`: a runtime that can only rewrite strings
+/// stays a valid [FluidItnDriver], and the provider tests for the stronger
+/// contract with `is` instead of carrying a capability flag.
+abstract interface class FluidTranscriptItnDriver implements FluidItnDriver {
+  /// Normalizes [text] in one native pass with its [timings] attached.
+  ///
+  /// The timings are an input, not an output. FluidAudio rewrites spans inside
+  /// the text — `twenty five dollars` becomes `$25` — and leaves the timeline
+  /// alone, so the timed words the caller already holds remain the truthful
+  /// ones; they also carry detail this seam drops, an absent confidence and a
+  /// speaker label. Returning only the written-form text is what makes it
+  /// structurally impossible for this path to hand back a guessed timestamp.
+  ///
+  /// Returns [text] unchanged when normalization is a no-op.
+  Future<String> normalizeTranscript({
+    required String text,
+    required List<FluidDriverTokenTiming> timings,
+  });
+}
+
 /// Injectable boundary between provider-neutral sessions and FluidAudio.
 abstract interface class FluidAudioRuntime {
   /// Creates and loads a streaming recognizer.
@@ -323,6 +364,13 @@ abstract interface class FluidAudioRuntime {
 
   /// Creates and loads a synthesis engine.
   Future<FluidTtsDriver> createTts(FluidTtsDriverConfiguration configuration);
+
+  /// Creates an inverse text normalizer.
+  ///
+  /// Must fail rather than return a driver when the native normalization
+  /// library is unavailable: FluidAudio's own ITN degrades to returning its
+  /// input unchanged, which would make the declared capability a lie.
+  Future<FluidItnDriver> createItn();
 
   /// Closes every outstanding driver. Must be idempotent.
   Future<void> close();

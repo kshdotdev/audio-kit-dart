@@ -4,6 +4,7 @@ import 'package:audio_core/audio_core.dart';
 import 'package:speech_core/speech_core.dart';
 
 import 'backend.dart';
+import 'duplex.dart';
 import 'failure.dart';
 import 'interfaces.dart';
 import 'sentence_segmenter.dart';
@@ -14,13 +15,32 @@ import 'transcript_transform.dart';
 /// Orchestrates recognition, a streaming backend, serialized TTS, and barge-in.
 ///
 /// The controller owns and closes its input, backend, TTS provider, and output.
+///
+/// ## Duplex
+///
+/// [duplex] selects between the default half-duplex flow and the opt-in
+/// full-duplex flow, and is the only thing that varies between them. In half
+/// duplex the controller gates recognition off for the duration of playback and
+/// treats any voice activity during playback as barge-in. In full duplex it
+/// never gates recognition at all — the microphone is expected to be
+/// echo-cancelled upstream — and voice activity alone no longer interrupts.
+///
+/// The controller is deliberately ignorant of *how* the microphone gets
+/// cleaned: it takes a [VoiceInput] and a resolved [VoiceDuplexConfig], and the
+/// echo canceller is composed a layer up. See [VoiceDuplexConfig] for the full
+/// barge-in matrix.
 final class VoiceConversationController {
-  /// Creates a half-duplex controller with VAD-driven barge-in.
+  /// Creates a conversation controller.
+  ///
+  /// Defaults to half duplex with VAD-driven barge-in. Pass a
+  /// [VoiceDuplexConfig.fullDuplex] policy — together with an echo-cancelled
+  /// [input] — to let the user speak over playback.
   VoiceConversationController({
     required this.input,
     required this.backend,
     required TextToSpeechProvider synthesizer,
     required VoiceSpeechOutput output,
+    this.duplex = const VoiceDuplexConfig.halfDuplex(),
     this.transcriptTransform = const IdentityTranscriptTransform(),
     this.failureMapper = const DefaultVoiceFailureMapper(),
     int maximumSentenceCharacters = 240,
@@ -34,6 +54,9 @@ final class VoiceConversationController {
   }) : _sentenceSegmenter = IncrementalSentenceSegmenter(
          maximumCharacters: maximumSentenceCharacters,
        ) {
+    _snapshot = VoiceConversationSnapshot.initial.copyWith(
+      duplexMode: duplex.mode,
+    );
     _synthesis = SerializedSynthesisQueue(
       synthesizer: synthesizer,
       output: output,
@@ -53,6 +76,12 @@ final class VoiceConversationController {
 
   /// Backend owned by this controller.
   final VoiceBackend backend;
+
+  /// Resolved duplex policy.
+  ///
+  /// Check [VoiceDuplexConfig.isDegraded] to detect a full-duplex request that
+  /// fell back to half duplex because no echo canceller was available.
+  final VoiceDuplexConfig duplex;
 
   /// Transform applied to final transcripts.
   final VoiceTranscriptTransform transcriptTransform;
@@ -81,6 +110,7 @@ final class VoiceConversationController {
   // ignore: cancel_subscriptions
   StreamSubscription<VoiceBackendEvent>? _backendSubscription;
   Completer<void>? _backendDone;
+  Timer? _sustainedSpeechTimer;
   String? _pendingFinalTranscript;
   int _transcriptRevision = 0;
   Future<void>? _startFuture;
@@ -181,6 +211,7 @@ final class VoiceConversationController {
     _closeRequested = true;
     _startRequestId += 1;
     _startQueued = false;
+    _cancelSustainedSpeechTimer();
     return _closeFuture = _close();
   }
 
@@ -354,6 +385,7 @@ final class VoiceConversationController {
       const AudioCancellation(reason: 'session_stopped'),
     );
     _turnCancellation = null;
+    _cancelSustainedSpeechTimer();
     _transcriptRevision++;
     final nextGeneration = _snapshot.generationId + 1;
     _emit(_snapshot.copyWith(generationId: nextGeneration));
@@ -523,11 +555,75 @@ final class VoiceConversationController {
   }
 
   void _onVoiceActivity(VoiceActivityEvent event) {
-    if (event is VoiceActivityStarted &&
-        _snapshot.sessionState == VoiceSessionState.active &&
-        _snapshot.turnState == VoiceTurnState.speaking) {
-      unawaited(_interruptForSpeech());
+    if (duplex.mode == VoiceDuplexMode.halfDuplex) {
+      if (event is VoiceActivityStarted &&
+          _snapshot.sessionState == VoiceSessionState.active &&
+          _snapshot.turnState == VoiceTurnState.speaking) {
+        unawaited(_interruptForSpeech());
+      }
+      return;
     }
+    _onFullDuplexVoiceActivity(event);
+  }
+
+  /// Voice activity does not interrupt full duplex — that is the point of it.
+  ///
+  /// The user talks over the assistant and keeps being transcribed, and the
+  /// turn ends when their utterance is actually committed. Only an application
+  /// that explicitly asked for [VoiceDuplexConfig.interruptAfterSustainedSpeech]
+  /// gets the earlier cut-off, and only after the speech has been sustained for
+  /// that long past the detector's own hysteresis.
+  void _onFullDuplexVoiceActivity(VoiceActivityEvent event) {
+    final Duration? threshold = duplex.interruptAfterSustainedSpeech;
+    if (threshold == null) {
+      return;
+    }
+    switch (event) {
+      case VoiceActivityStarted():
+        if (_snapshot.sessionState != VoiceSessionState.active ||
+            _snapshot.turnState != VoiceTurnState.speaking) {
+          return;
+        }
+        final int generationId = _snapshot.generationId;
+        _cancelSustainedSpeechTimer();
+        _sustainedSpeechTimer = Timer(threshold, () {
+          _sustainedSpeechTimer = null;
+          if (_snapshot.sessionState == VoiceSessionState.active &&
+              _snapshot.turnState == VoiceTurnState.speaking &&
+              _snapshot.generationId == generationId) {
+            unawaited(_interruptForSpeech());
+          }
+        });
+      case VoiceActivityEnded():
+        _cancelSustainedSpeechTimer();
+      case VoiceActivityProbability():
+        break;
+    }
+  }
+
+  void _cancelSustainedSpeechTimer() {
+    _sustainedSpeechTimer?.cancel();
+    _sustainedSpeechTimer = null;
+  }
+
+  /// Gates recognition, or does nothing at all in full duplex.
+  ///
+  /// Full duplex never gates: the microphone is echo-cancelled, so there is
+  /// nothing to protect the recognizer from, and tearing the session down and
+  /// back up is exactly the stale-generation dance the mode exists to remove.
+  /// Skipping the call rather than relying on it being idempotent keeps the
+  /// invariant checkable — a full-duplex session issues no gating calls at all.
+  Future<void> _setRecognitionEnabled(
+    bool enabled, {
+    AudioCancellationToken? cancellationToken,
+  }) {
+    if (duplex.mode == VoiceDuplexMode.fullDuplex) {
+      return Future<void>.value();
+    }
+    return input.setRecognitionEnabled(
+      enabled,
+      cancellationToken: cancellationToken,
+    );
   }
 
   Future<void> _acceptFinalTranscript(String rawTranscript) async {
@@ -551,6 +647,7 @@ final class VoiceConversationController {
     }
 
     _turnCancellation?.cancel(const AudioCancellation(reason: 'turn_replaced'));
+    _cancelSustainedSpeechTimer();
     final generationId = _snapshot.generationId + 1;
     final cancellation = AudioCancellationController();
     _turnCancellation = cancellation;
@@ -576,10 +673,7 @@ final class VoiceConversationController {
       if (!_isCurrent(generationId, cancellation.token)) {
         return;
       }
-      await input.setRecognitionEnabled(
-        true,
-        cancellationToken: cancellation.token,
-      );
+      await _setRecognitionEnabled(true, cancellationToken: cancellation.token);
       if (!_isCurrent(generationId, cancellation.token)) {
         return;
       }
@@ -691,10 +785,7 @@ final class VoiceConversationController {
       if (!_isCurrent(generationId, cancellation.token)) {
         return;
       }
-      await input.setRecognitionEnabled(
-        true,
-        cancellationToken: cancellation.token,
-      );
+      await _setRecognitionEnabled(true, cancellationToken: cancellation.token);
       if (_isCurrent(generationId, cancellation.token)) {
         _emit(_snapshot.copyWith(turnState: VoiceTurnState.listening));
       }
@@ -767,10 +858,7 @@ final class VoiceConversationController {
       cancellationToken.throwIfCancelled();
       return;
     }
-    await input.setRecognitionEnabled(
-      false,
-      cancellationToken: cancellationToken,
-    );
+    await _setRecognitionEnabled(false, cancellationToken: cancellationToken);
     if (_isCurrent(generationId, cancellationToken)) {
       _emit(_snapshot.copyWith(turnState: VoiceTurnState.speaking));
     }
@@ -784,6 +872,7 @@ final class VoiceConversationController {
     _transcriptRevision++;
     _turnCancellation?.cancel(const AudioCancellation(reason: 'barge_in'));
     _turnCancellation = null;
+    _cancelSustainedSpeechTimer();
     _emit(
       _snapshot.copyWith(
         generationId: nextGeneration,
@@ -813,7 +902,7 @@ final class VoiceConversationController {
       return;
     }
     try {
-      await input.setRecognitionEnabled(true);
+      await _setRecognitionEnabled(true);
     } catch (error, stackTrace) {
       cleanupError ??= error;
       cleanupStackTrace ??= stackTrace;
@@ -854,6 +943,7 @@ final class VoiceConversationController {
     final nextGeneration = generationId + 1;
     _turnCancellation?.cancel(const AudioCancellation(reason: 'turn_failed'));
     _turnCancellation = null;
+    _cancelSustainedSpeechTimer();
     _emit(
       _snapshot.copyWith(
         generationId: nextGeneration,
@@ -878,7 +968,7 @@ final class VoiceConversationController {
     if (_snapshot.sessionState == VoiceSessionState.active &&
         _snapshot.generationId == nextGeneration) {
       try {
-        await input.setRecognitionEnabled(true);
+        await _setRecognitionEnabled(true);
       } on Object {
         // The original turn failure remains user-visible.
       }
@@ -902,6 +992,7 @@ final class VoiceConversationController {
     _turnCancellation?.cancel(
       const AudioCancellation(reason: 'session_failed'),
     );
+    _cancelSustainedSpeechTimer();
     final nextGeneration = _snapshot.generationId + 1;
     _emit(
       _snapshot.copyWith(
