@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-dev
 
 - Initial package: Linux capture and PCM playback for `audio_flutter` over the
   PulseAudio/PipeWire command-line tools, with no native code.

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-dev
 
 - Initial implementation of `audio_aec`: acoustic echo cancellation for Audio
   Kit streams over WebRTC AEC3.
