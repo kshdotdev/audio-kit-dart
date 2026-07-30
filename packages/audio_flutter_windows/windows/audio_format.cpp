@@ -1,5 +1,7 @@
 #include "audio_format.h"
 
+// ks.h must precede ksmedia.h (ksmedia.h enforces the order with an #error).
+#include <ks.h>
 #include <ksmedia.h>
 
 #include <algorithm>

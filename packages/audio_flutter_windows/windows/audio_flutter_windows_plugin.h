@@ -9,6 +9,8 @@
 
 #include <windows.h>
 
+#include <mmdeviceapi.h>
+
 #include <cstdint>
 #include <functional>
 #include <map>
