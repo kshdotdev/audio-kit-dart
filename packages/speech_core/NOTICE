@@ -26,21 +26,13 @@ This package contains code adapted from Control Center
 
 Adapted files:
 
-  lib/src/voice_profile_matching.dart
-    from packages/cc_domain/lib/features/meetings/domain/services/
-    voice_profile_matching.dart
-    The matching, blending and un-blending math is unchanged. The functions now
-    take SpeakerEmbedding instead of List<double>, so a comparison across two
-    embedding spaces returns null rather than a plausible number; the 0.70 /
-    0.50 thresholds moved out of the algorithm into a caller-supplied
-    VoiceMatchThresholds carrying its own provenance; blendCentroid no longer
-    falls back to a fresh start on a space mismatch; and the per-profile
-    Float32List.fromList allocation is gone because the vector is stored once.
-    The cosine-similarity kernel it calls (lib/src/embedding.dart,
-    speakerSimilarity) is adapted from
-    packages/cc_domain/lib/core/domain/services/cosine_similarity.dart, with
-    the length check replaced by an embedding-space check and the result
-    clamped to the cosine range.
+  lib/src/embedding.dart (speakerSimilarity, requireSpeakerSimilarity)
+    from packages/cc_domain/lib/core/domain/services/cosine_similarity.dart
+    The cosine-similarity kernel is unchanged, with the length check replaced
+    by an embedding-space check and the result clamped to the cosine range.
 
-Portions of the accompanying test suite are likewise adapted from Control
-Center's test/features/meetings/voice_profile_matching_test.dart.
+The voice-profile matcher that used to sit here (VoiceProfile, bestVoiceMatch,
+blendCentroid and friends, adapted from cc_domain's voice_profile_matching.dart)
+moved to transcript_kit in the sibling conversation-kit-dart workspace before
+this package released it; its attribution travels with it in that package's
+NOTICE.

@@ -13,4 +13,3 @@ export 'src/requests.dart';
 export 'src/sessions.dart';
 export 'src/transcript.dart';
 export 'src/turn_completion.dart';
-export 'src/voice_profile_matching.dart';
