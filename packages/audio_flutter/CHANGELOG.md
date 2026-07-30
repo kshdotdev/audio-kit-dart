@@ -39,8 +39,8 @@
 - Add `linux` and `windows` to the declared `platforms`. The package now
   advertises ios/linux/macos/windows. Capability is still per platform —
   system/process capture remains macOS-only.
-- Add dependencies on `audio_flutter_linux: ^0.1.0-dev` and
-  `audio_flutter_windows: ^0.1.0-dev`. Both constraints are prerelease because
+- Add dependencies on `audio_flutter_linux: ^0.1.0` and
+  `audio_flutter_windows: ^0.1.0`. Both packages are new because
   neither implementation has been published yet; this package cannot be
   re-released until they are live on pub.dev at a stable version and these
   constraints are widened to `^0.1.0`.

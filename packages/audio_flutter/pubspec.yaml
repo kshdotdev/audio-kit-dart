@@ -23,9 +23,9 @@ environment:
 dependencies:
   audio_core: ^0.1.0
   audio_flutter_darwin: ^0.1.0
-  audio_flutter_linux: ^0.1.0-dev
+  audio_flutter_linux: ^0.1.0
   audio_flutter_platform_interface: ^0.1.0
-  audio_flutter_windows: ^0.1.0-dev
+  audio_flutter_windows: ^0.1.0
   flutter:
     sdk: flutter
 

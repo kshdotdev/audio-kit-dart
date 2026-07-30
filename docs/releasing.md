@@ -25,7 +25,7 @@ pub.dev before publishing a dependent package:
 4. `voice_flutter`
 
 This is the same order `tool/publish_dry_run.sh` iterates; keep the two in
-sync. Four of those packages are still at `0.1.0-dev` and have never been
+sync. Four of those packages are at `0.1.0` but have never been
 published: `audio_flutter_linux`, `audio_flutter_windows`, `audio_aec`, and
 `speech_sherpa`.
 

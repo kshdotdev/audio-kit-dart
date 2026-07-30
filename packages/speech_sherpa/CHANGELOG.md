@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0-dev
+## 0.1.0
 
 - Initial package: cross-platform batch speech-to-text, Silero voice-activity
   detection, pyannote + WeSpeaker diarization with provenance-tagged speaker

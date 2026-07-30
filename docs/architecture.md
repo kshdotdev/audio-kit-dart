@@ -342,7 +342,7 @@ fan the same synthesized frames into recording, metering, or analysis sinks.
   path dependencies), but not all of them are on pub.dev yet. The 13 original
   packages are published at `0.1.0`. The four newer packages —
   `audio_flutter_linux`, `audio_flutter_windows`, `audio_aec`, and
-  `speech_sherpa` — are unpublished at `0.1.0-dev`, pending their first
+  `speech_sherpa` — are unpublished at `0.1.0`, pending their first
   release. Until then their dependents (`audio_flutter` on the two platform
   implementations, `voice_flutter` on `audio_aec`) resolve only inside this
   workspace and cannot be re-released.

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0-dev
+## 0.1.0
 
 - Initial package: Windows capture and PCM playback for `audio_flutter` over
   WASAPI. **The native half has not been compiled** — see the README.
