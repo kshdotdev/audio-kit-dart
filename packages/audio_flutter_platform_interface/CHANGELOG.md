@@ -19,6 +19,15 @@
   and `firstAudioAtMillis` to `PlatformAudioSessionEvent`. They separate a
   silent room from a dead tap, and a device that never ran from one that runs
   and delivers zeroes.
+- Add `captureBackendInfo()` and `listCaptureSources()` with
+  `PlatformCaptureBackendInfo`, `PlatformCaptureSourceInfo`, and the
+  `PlatformCaptureSourceKind`, `PlatformCaptureSourceAvailability`, and
+  `PlatformCaptureCapability` enums — normalized capture discovery consumed by
+  `audio_flutter`'s new `FlutterCaptureBackend`. Both carry
+  `UnimplementedError` default bodies.
+- Add `PlatformCaptureTimingQuality` and `timingQuality` on capture session
+  info, so platforms report whether track timestamps are native-mapped,
+  synchronized, or synthesized.
 
 ## 0.1.0
 
