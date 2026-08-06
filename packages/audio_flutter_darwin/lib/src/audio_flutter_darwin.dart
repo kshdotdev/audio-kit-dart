@@ -57,6 +57,7 @@ final class DarwinAudioFlutterPlatform extends AudioFlutterPlatform {
       trackId: result.trackId,
       clockId: result.clockId,
       format: _decodeFormat(result.format),
+      timingQuality: PlatformCaptureTimingQuality.nativeMapped,
     );
   }
 
@@ -118,6 +119,149 @@ final class DarwinAudioFlutterPlatform extends AudioFlutterPlatform {
   @override
   Future<int> cleanupOrphanedCaptureDevices() =>
       _host.cleanupOrphanedAggregateDevices();
+
+  @override
+  Future<PlatformCaptureBackendInfo> captureBackendInfo() async {
+    final bool systemCaptureSupported = await isSystemAudioCaptureSupported();
+    return PlatformCaptureBackendInfo(
+      backendId: 'audio_flutter.darwin.catap',
+      displayName: 'Darwin Core Audio capture',
+      platform: 'darwin',
+      sourceKinds: <PlatformCaptureSourceKind>{
+        PlatformCaptureSourceKind.microphone,
+        if (systemCaptureSupported) ...<PlatformCaptureSourceKind>{
+          PlatformCaptureSourceKind.application,
+          PlatformCaptureSourceKind.systemMix,
+        },
+      },
+      capabilities: <PlatformCaptureCapability>{
+        PlatformCaptureCapability.nativeMonotonicClock,
+        if (systemCaptureSupported) ...<PlatformCaptureCapability>{
+          PlatformCaptureCapability.processFiltering,
+          PlatformCaptureCapability.applicationFiltering,
+          PlatformCaptureCapability.systemMix,
+        },
+      },
+    );
+  }
+
+  @override
+  Future<List<PlatformCaptureSourceInfo>> listCaptureSources() async {
+    final PlatformMicrophonePermissionStatus microphonePermission =
+        await microphonePermissionStatus();
+    final List<PlatformAudioInputDevice> inputs = await listAudioInputDevices();
+    final bool systemCaptureSupported = await isSystemAudioCaptureSupported();
+    final List<PlatformAudioProcess> processes = systemCaptureSupported
+        ? await listAudioProcesses()
+        : const <PlatformAudioProcess>[];
+    final _DarwinAvailability microphone = _darwinMicrophoneAvailability(
+      microphonePermission,
+    );
+
+    return <PlatformCaptureSourceInfo>[
+      if (inputs.isEmpty)
+        PlatformCaptureSourceInfo(
+          sourceId: 'darwin.microphone.unavailable',
+          kind: PlatformCaptureSourceKind.microphone,
+          displayName: 'Microphone',
+          availability:
+              microphone.availability ==
+                  PlatformCaptureSourceAvailability.available
+              ? PlatformCaptureSourceAvailability.unavailable
+              : microphone.availability,
+          captureKind: PlatformCaptureKind.microphone,
+          timingQuality: PlatformCaptureTimingQuality.nativeMapped,
+          capabilities: const <PlatformCaptureCapability>{
+            PlatformCaptureCapability.nativeMonotonicClock,
+          },
+          availabilityCode: microphone.code ?? 'darwin_microphone_unavailable',
+          availabilityReason:
+              microphone.reason ?? 'No Core Audio input device is available.',
+        )
+      else
+        for (final PlatformAudioInputDevice input in inputs)
+          PlatformCaptureSourceInfo(
+            sourceId: 'darwin.microphone.${Uri.encodeComponent(input.id)}',
+            kind: PlatformCaptureSourceKind.microphone,
+            displayName: input.label,
+            availability: microphone.availability,
+            captureKind: PlatformCaptureKind.microphone,
+            timingQuality: PlatformCaptureTimingQuality.nativeMapped,
+            capabilities: const <PlatformCaptureCapability>{
+              PlatformCaptureCapability.nativeMonotonicClock,
+            },
+            isDefault: input.isDefault,
+            nativeSourceId: input.id,
+            inputDeviceId: input.id,
+            availabilityCode: microphone.code,
+            availabilityReason: microphone.reason,
+          ),
+      PlatformCaptureSourceInfo(
+        sourceId: 'darwin.system-mix',
+        kind: PlatformCaptureSourceKind.systemMix,
+        displayName: 'System audio mix',
+        availability: systemCaptureSupported
+            ? PlatformCaptureSourceAvailability.available
+            : PlatformCaptureSourceAvailability.unavailable,
+        captureKind: PlatformCaptureKind.systemAudio,
+        timingQuality: PlatformCaptureTimingQuality.nativeMapped,
+        capabilities: const <PlatformCaptureCapability>{
+          PlatformCaptureCapability.systemMix,
+          PlatformCaptureCapability.nativeMonotonicClock,
+        },
+        availabilityCode: systemCaptureSupported
+            ? null
+            : 'darwin_catap_unavailable',
+        availabilityReason: systemCaptureSupported
+            ? null
+            : 'Core Audio process taps require macOS 14.4 or newer and are '
+                  'not available on this Darwin target.',
+      ),
+      if (systemCaptureSupported)
+        for (final PlatformAudioProcess process in processes)
+          PlatformCaptureSourceInfo(
+            sourceId: 'darwin.process.${process.processId}',
+            kind: PlatformCaptureSourceKind.application,
+            displayName: process.bundleId.isEmpty
+                ? 'Process ${process.processId}'
+                : process.bundleId,
+            availability: PlatformCaptureSourceAvailability.available,
+            captureKind: PlatformCaptureKind.systemAudio,
+            timingQuality: PlatformCaptureTimingQuality.nativeMapped,
+            capabilities: const <PlatformCaptureCapability>{
+              PlatformCaptureCapability.processFiltering,
+              PlatformCaptureCapability.applicationFiltering,
+              PlatformCaptureCapability.nativeMonotonicClock,
+            },
+            processIds: <int>[process.processId],
+            applicationId: process.bundleId.isEmpty ? null : process.bundleId,
+          )
+      else
+        const PlatformCaptureSourceInfo(
+          sourceId: 'darwin.application.unavailable',
+          kind: PlatformCaptureSourceKind.application,
+          displayName: 'Application audio',
+          availability: PlatformCaptureSourceAvailability.unavailable,
+          captureKind: PlatformCaptureKind.systemAudio,
+          timingQuality: PlatformCaptureTimingQuality.nativeMapped,
+          availabilityCode: 'darwin_process_capture_unavailable',
+          availabilityReason:
+              'Per-process Core Audio capture requires macOS 14.4 or newer.',
+        ),
+      const PlatformCaptureSourceInfo(
+        sourceId: 'darwin.browser-group.unavailable',
+        kind: PlatformCaptureSourceKind.browser,
+        displayName: 'Browser audio group',
+        availability: PlatformCaptureSourceAvailability.unavailable,
+        captureKind: PlatformCaptureKind.systemAudio,
+        timingQuality: PlatformCaptureTimingQuality.nativeMapped,
+        availabilityCode: 'darwin_browser_grouping_requires_host_selection',
+        availabilityReason:
+            'Core Audio exposes processes, not browser groups. Expand an '
+            'explicit browser selection to process IDs before probing.',
+      ),
+    ];
+  }
 
   @override
   Future<List<PlatformAudioInputDevice>> listAudioInputDevices() async {
@@ -200,6 +344,39 @@ final class DarwinAudioFlutterPlatform extends AudioFlutterPlatform {
       )
       .map(_decodeEvent);
 }
+
+final class _DarwinAvailability {
+  const _DarwinAvailability(this.availability, this.code, this.reason);
+
+  final PlatformCaptureSourceAvailability availability;
+  final String? code;
+  final String? reason;
+}
+
+_DarwinAvailability _darwinMicrophoneAvailability(
+  PlatformMicrophonePermissionStatus status,
+) => switch (status) {
+  PlatformMicrophonePermissionStatus.notDetermined => const _DarwinAvailability(
+    PlatformCaptureSourceAvailability.permissionRequired,
+    'microphone_permission_required',
+    'Microphone access has not been requested yet.',
+  ),
+  PlatformMicrophonePermissionStatus.granted => const _DarwinAvailability(
+    PlatformCaptureSourceAvailability.available,
+    null,
+    null,
+  ),
+  PlatformMicrophonePermissionStatus.denied => const _DarwinAvailability(
+    PlatformCaptureSourceAvailability.unavailable,
+    'microphone_permission_denied',
+    'Microphone access was denied for this app.',
+  ),
+  PlatformMicrophonePermissionStatus.restricted => const _DarwinAvailability(
+    PlatformCaptureSourceAvailability.unavailable,
+    'microphone_permission_restricted',
+    'Microphone access is restricted by device policy.',
+  ),
+};
 
 pigeon.PcmFormatMessage _encodeFormat(PlatformPcmFormat format) =>
     pigeon.PcmFormatMessage(

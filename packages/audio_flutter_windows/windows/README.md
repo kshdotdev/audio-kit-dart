@@ -1,7 +1,8 @@
 # Building and validating the Windows native plugin
 
-This C++ has not been compiled. It was written on macOS against the Windows SDK
-headers by reference only. Everything below is what a first Windows run needs to
+The C++ translation units have been cross-compiled as Windows x64 C++17. The
+complete plugin still needs the repository's MSVC job and real Windows audio
+devices for runtime qualification; everything below is what that run needs to
 establish.
 
 ## Build
@@ -35,6 +36,19 @@ likelihood:
 5. **`FlutterView::GetNativeWindow()`.** The accessor name has moved between
    Flutter versions; `RunOnPlatformThread` is the only caller.
 
+## Application-loopback checks
+
+Use Windows 11 (or another host whose build is at least 20348) and confirm:
+
+1. `listAudioProcesses` reports active Zoom/Teams/browser render sessions.
+2. Capturing one PID tree excludes an unrelated player on the same endpoint.
+3. Capturing two unrelated PID trees includes both without doubling either.
+4. Selecting an ancestor plus its child does not double the child's audio.
+5. Device changes do not broaden process capture; the virtual loopback device
+   spans endpoints by design.
+6. On Windows 10 22H2 build 19045, application sources remain explicitly
+   unavailable while system-mix capture continues to work.
+
 ## Runtime checks, in order
 
 1. **Enumeration** — `listAudioInputDevices()` and `listSystemAudioSources()`
@@ -67,8 +81,6 @@ likelihood:
 
 ## Known gaps
 
-* Per-process loopback (`AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`) is not
-  implemented; `processIds` is rejected instead.
 * No source-side recording; `rawRecordingPath` is rejected.
 * No `IMMNotificationClient`, so a default-device change mid-session is not
   followed.

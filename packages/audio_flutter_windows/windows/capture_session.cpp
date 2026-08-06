@@ -22,6 +22,7 @@
 
 #include "audio_format.h"
 #include "com_utils.h"
+#include "process_loopback_capture.h"
 
 namespace audio_flutter_windows {
 
@@ -43,6 +44,19 @@ int64_t NowMillis() {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
              std::chrono::steady_clock::now().time_since_epoch())
       .count();
+}
+
+int64_t QpcNowMicros() {
+  LARGE_INTEGER counter = {};
+  LARGE_INTEGER frequency = {};
+  if (!::QueryPerformanceCounter(&counter) ||
+      !::QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0) {
+    return NowMillis() * 1000;
+  }
+  const long double micros =
+      static_cast<long double>(counter.QuadPart) * 1000000.0L /
+      static_cast<long double>(frequency.QuadPart);
+  return static_cast<int64_t>(micros);
 }
 
 }  // namespace
@@ -88,6 +102,36 @@ CaptureSession::~CaptureSession() {
 }
 
 bool CaptureSession::Prepare(std::string* error) {
+  if (!config_.process_ids.empty()) {
+    if (config_.kind != CaptureKind::kSystemAudio) {
+      if (error != nullptr) {
+        *error = "process loopback is valid only for system-audio capture";
+      }
+      return false;
+    }
+    if (!config_.endpoint_id.empty()) {
+      if (error != nullptr) {
+        *error = "process loopback cannot also select a render endpoint";
+      }
+      return false;
+    }
+    if (!IsProcessLoopbackSupported()) {
+      if (error != nullptr) {
+        *error = "process loopback requires Windows OS build 20348 or newer";
+      }
+      return false;
+    }
+    source_id_ = "process:";
+    for (size_t index = 0; index < config_.process_ids.size(); ++index) {
+      if (index != 0) {
+        source_id_ += ',';
+      }
+      source_id_ += std::to_string(config_.process_ids[index]);
+    }
+    Emit(SessionPhase::kPrepared);
+    return true;
+  }
+
   ComApartment apartment;
   if (!apartment.ok()) {
     if (error != nullptr) {
@@ -231,6 +275,11 @@ void CaptureSession::Fail(const std::string& code, const std::string& message) {
 }
 
 void CaptureSession::CaptureThreadMain() {
+  if (!config_.process_ids.empty()) {
+    ProcessCaptureThreadMain();
+    return;
+  }
+
   ComApartment apartment;
   if (!apartment.ok()) {
     Fail("CaptureFailed", "COM could not be initialised on the capture thread");
@@ -364,6 +413,7 @@ void CaptureSession::CaptureThreadMain() {
   std::vector<float> pending;
   const int64_t started_at = NowMillis();
   int64_t last_audio_at = started_at;
+  int64_t timestamp_anchor_micros = -1;
   bool overflowed = false;
 
   while (!stop_requested_.load()) {
@@ -377,8 +427,9 @@ void CaptureSession::CaptureThreadMain() {
       BYTE* data = nullptr;
       UINT32 frames_available = 0;
       DWORD flags = 0;
-      hr = capture_client->GetBuffer(&data, &frames_available, &flags, nullptr,
-                                     nullptr);
+      UINT64 qpc_position = 0;
+      hr = capture_client->GetBuffer(&data, &frames_available, &flags,
+                                     nullptr, &qpc_position);
       if (FAILED(hr)) {
         break;
       }
@@ -399,6 +450,14 @@ void CaptureSession::CaptureThreadMain() {
       hr = capture_client->ReleaseBuffer(frames_available);
       if (FAILED(hr)) {
         break;
+      }
+
+      if (timestamp_anchor_micros < 0 && frames_available > 0) {
+        timestamp_anchor_micros =
+            (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR) == 0 &&
+                    qpc_position != 0
+                ? static_cast<int64_t>(qpc_position / 10)
+                : QpcNowMicros();
       }
 
       if (!mono_block.empty()) {
@@ -431,8 +490,10 @@ void CaptureSession::CaptureThreadMain() {
           std::lock_guard<std::mutex> lock(mutex_);
           frame.sequence = next_sequence_++;
           frame.sample_offset = next_sample_offset_;
-          frame.timestamp_micros = next_sample_offset_ * 1000000 /
-                                   std::max(1, config_.sample_rate);
+          frame.timestamp_micros =
+              std::max<int64_t>(0, timestamp_anchor_micros) +
+              next_sample_offset_ * 1000000 /
+                  std::max(1, config_.sample_rate);
           next_sample_offset_ += static_cast<int64_t>(samples_per_frame);
           admission = ring_.Add(std::move(frame));
         }
@@ -490,6 +551,121 @@ void CaptureSession::CaptureThreadMain() {
     return;
   }
 
+  finished_.store(true);
+  frames_available_.notify_all();
+}
+
+void CaptureSession::ProcessCaptureThreadMain() {
+  ComApartment apartment;
+  if (!apartment.ok()) {
+    Fail("CaptureFailed", "COM could not be initialised on the capture thread");
+    running_.store(false);
+    return;
+  }
+
+  ProcessLoopbackCapture capture(config_.process_ids, config_.sample_rate,
+                                 config_.channel_count);
+  std::string error;
+  if (!capture.Initialize(&error)) {
+    Fail("ProcessCaptureActivationFailed", error);
+    running_.store(false);
+    return;
+  }
+  if (!capture.Start(&error)) {
+    Fail("ProcessCaptureStartFailed", error);
+    running_.store(false);
+    return;
+  }
+
+  DWORD mmcss_task_index = 0;
+  MmcssHandle mmcss(::AvSetMmThreadCharacteristicsW(L"Pro Audio",
+                                                    &mmcss_task_index));
+  Emit(SessionPhase::kRunning);
+
+  const size_t channel_count =
+      static_cast<size_t>(std::max(1, config_.channel_count));
+  const int64_t frame_micros =
+      config_.frame_duration_micros > 0 ? config_.frame_duration_micros : 100000;
+  const size_t sample_frames_per_frame =
+      static_cast<size_t>(std::max<int64_t>(
+          1, static_cast<int64_t>(config_.sample_rate) * frame_micros /
+                 1000000));
+  const size_t samples_per_frame = sample_frames_per_frame * channel_count;
+
+  std::vector<float> mixed;
+  std::vector<float> pending;
+  int64_t pending_timestamp_micros = 0;
+  const int64_t started_at = NowMillis();
+  bool overflowed = false;
+
+  while (!stop_requested_.load()) {
+    int64_t mixed_timestamp_micros = 0;
+    if (!capture.Drain(&mixed, &mixed_timestamp_micros, &error)) {
+      capture.Stop();
+      running_.store(false);
+      Fail("ProcessCaptureReadFailed", error);
+      return;
+    }
+    if (!mixed.empty()) {
+      if (pending.empty()) {
+        pending_timestamp_micros = mixed_timestamp_micros;
+      }
+      pending.insert(pending.end(), mixed.begin(), mixed.end());
+      received_any_audio_.store(true);
+    }
+
+    while (pending.size() >= samples_per_frame) {
+      CapturedFrame frame;
+      frame.samples.assign(pending.begin(),
+                           pending.begin() +
+                               static_cast<std::ptrdiff_t>(samples_per_frame));
+      pending.erase(
+          pending.begin(),
+          pending.begin() + static_cast<std::ptrdiff_t>(samples_per_frame));
+
+      FrameRing::Admission admission;
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        frame.sequence = next_sequence_++;
+        frame.sample_offset = next_sample_offset_;
+        frame.timestamp_micros = pending_timestamp_micros;
+        next_sample_offset_ += static_cast<int64_t>(sample_frames_per_frame);
+        pending_timestamp_micros +=
+            static_cast<int64_t>(sample_frames_per_frame) * 1000000 /
+            std::max(1, config_.sample_rate);
+        admission = ring_.Add(std::move(frame));
+      }
+      if (admission == FrameRing::Admission::kOverflowed) {
+        overflowed = true;
+        break;
+      }
+      frames_available_.notify_all();
+    }
+
+    if (overflowed) {
+      break;
+    }
+    if (!received_any_audio_.load() &&
+        NowMillis() - started_at > kStallTimeoutMillis) {
+      capture.Stop();
+      running_.store(false);
+      Fail("CaptureStalled",
+           "no process-loopback audio clock within the capture stall timeout");
+      return;
+    }
+
+    for (DWORD slept = 0; slept < 10 && !stop_requested_.load(); slept += 5) {
+      ::Sleep(5);
+    }
+  }
+
+  capture.Stop();
+  running_.store(false);
+  if (overflowed) {
+    Fail("CaptureMailboxOverflow",
+         "the capture mailbox overflowed under the failCapture policy");
+    return;
+  }
   finished_.store(true);
   frames_available_.notify_all();
 }

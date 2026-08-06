@@ -84,6 +84,7 @@ void main() {
         'frameDurationMicros': 120000,
         'maxBufferedDurationMicros': 3000000,
         'overflowPolicy': 'dropOldest',
+        'processIds': <int>[],
         'inputDeviceId': '{0.0.0.render}',
       });
     });
@@ -126,6 +127,7 @@ void main() {
             'sourceId': 'render:{0.0.0}',
             'trackId': 'them',
             'clockId': 'wasapi',
+            'timingQuality': 'nativeMapped',
             'sampleRate': 16000,
             'channelCount': 1,
           });
@@ -134,6 +136,7 @@ void main() {
       expect(info.sourceId, 'render:{0.0.0}');
       expect(info.trackId, 'them');
       expect(info.clockId, 'wasapi');
+      expect(info.timingQuality, PlatformCaptureTimingQuality.nativeMapped);
       expect(
         info.format,
         const PlatformPcmFormat(sampleRate: 16000, channelCount: 1),

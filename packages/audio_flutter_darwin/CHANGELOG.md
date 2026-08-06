@@ -40,6 +40,12 @@
 - Document the system-audio permission preflight as advisory: the macOS grant is
   enforced at delivery, so it can report success for a tap that will deliver
   only silence. Capture health remains the authoritative signal.
+- Lower the Swift package platform floor from macOS 14 to macOS 12. The plugin
+  shell, microphone capture, and playback run on macOS 12; process-tap system
+  audio stays runtime-gated to macOS 14.4 behind `@available` guards, so host
+  applications can launch on macOS 12/13 and see system capture reported as
+  unsupported there instead of failing to link.
+- Add a Swift test target covering the darwin support layer.
 
 ## 0.1.0
 

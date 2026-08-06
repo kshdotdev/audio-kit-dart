@@ -29,6 +29,7 @@ final class LinuxCaptureSession {
     required this.sessionId,
     required this.request,
     required this.target,
+    this.monitorStreamIndex,
     required this.runner,
     this.stallTimeout = kLinuxCaptureStallTimeout,
     LinuxRecordingSinkFactory? recordingSinkFactory,
@@ -51,6 +52,13 @@ final class LinuxCaptureSession {
 
   /// Resolved PulseAudio source name, or null to accept the tool's default.
   final String? target;
+
+  /// Pulse sink-input selected with `parecord --monitor-stream`.
+  ///
+  /// Null means [target] is an ordinary microphone or monitor source. A
+  /// non-null value deliberately removes the `pw-record` fallback because it
+  /// cannot represent this isolation boundary.
+  final int? monitorStreamIndex;
 
   final LinuxProcessRunner runner;
 
@@ -86,7 +94,9 @@ final class LinuxCaptureSession {
 
   PlatformCaptureSessionInfo get info => PlatformCaptureSessionInfo(
     sessionId: sessionId,
-    sourceId: target ?? _defaultSourceId,
+    sourceId: monitorStreamIndex == null
+        ? target ?? _defaultSourceId
+        : pulseMonitorStreamTarget(monitorStreamIndex!),
     trackId: switch (request.kind) {
       PlatformCaptureKind.microphone => 'me',
       PlatformCaptureKind.systemAudio => 'them',
@@ -121,6 +131,7 @@ final class LinuxCaptureSession {
     final List<List<String>> attempts = captureCommands(
       format: request.outputFormat,
       target: target,
+      monitorStreamIndex: monitorStreamIndex,
     );
     Object? lastError;
     for (final List<String> command in attempts) {
@@ -335,7 +346,7 @@ final class LinuxCaptureSession {
       _fail(
         'SystemCaptureDead',
         'No audio within ${stallTimeout.inMilliseconds}ms of starting '
-            '${target ?? 'the default source'}.',
+            '${monitorStreamIndex == null ? target ?? 'the default source' : 'application stream $monitorStreamIndex'}.',
       );
     });
   }

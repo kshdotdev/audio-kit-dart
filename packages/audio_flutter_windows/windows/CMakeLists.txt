@@ -25,6 +25,8 @@ list(APPEND PLUGIN_SOURCES
   "frame_ring.h"
   "playback_session.cpp"
   "playback_session.h"
+  "process_loopback_capture.cpp"
+  "process_loopback_capture.h"
 )
 
 # Define the plugin library target. Its name must not be changed (see comment

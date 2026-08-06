@@ -52,6 +52,15 @@
 - Document in the README that Apple platforms still require the host app's
   `Info.plist` microphone usage description; the permission API added in this
   release governs the grant, not the declaration.
+- Add `FlutterCaptureBackend`, the federated implementation of `audio_core`'s
+  new `CaptureBackend` contract. Probes are single-use grants: a start must
+  present the exact request/source pair that was probed, and the source is
+  revalidated immediately before native allocation.
+- Expose monotonic timing on prepared capture sessions: `timingQuality` and
+  the `timing` mapping established by the first delivered frame, plus optional
+  `logicalSourceId` and `timingQuality` overrides on the session config, so a
+  host can carry a normalized source identity and timing provenance through to
+  durable track manifests.
 
 ## 0.1.0
 

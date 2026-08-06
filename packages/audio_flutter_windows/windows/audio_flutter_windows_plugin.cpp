@@ -13,11 +13,13 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <optional>
 #include <utility>
 #include <vector>
 
 #include "com_utils.h"
+#include "process_loopback_capture.h"
 
 namespace audio_flutter_windows {
 
@@ -62,6 +64,36 @@ std::string StringArg(const flutter::EncodableMap& map, const char* key) {
   }
   const auto* text = std::get_if<std::string>(value);
   return text == nullptr ? std::string() : *text;
+}
+
+std::vector<DWORD> ProcessIdsArg(const flutter::EncodableMap& map,
+                                 const char* key) {
+  const flutter::EncodableValue* value = Find(map, key);
+  const auto* list =
+      value == nullptr ? nullptr : std::get_if<flutter::EncodableList>(value);
+  if (list == nullptr) {
+    return {};
+  }
+  std::vector<DWORD> process_ids;
+  for (const flutter::EncodableValue& item : *list) {
+    int64_t process_id = 0;
+    if (const auto* narrow = std::get_if<int32_t>(&item)) {
+      process_id = *narrow;
+    } else if (const auto* wide = std::get_if<int64_t>(&item)) {
+      process_id = *wide;
+    }
+    if (process_id <= 0 ||
+        process_id > static_cast<int64_t>(std::numeric_limits<DWORD>::max())) {
+      return {};
+    }
+    const DWORD native_id = static_cast<DWORD>(process_id);
+    if (std::find(process_ids.begin(), process_ids.end(), native_id) !=
+        process_ids.end()) {
+      return {};
+    }
+    process_ids.push_back(native_id);
+  }
+  return process_ids;
 }
 
 const flutter::EncodableMap* MapArguments(
@@ -235,6 +267,10 @@ void AudioFlutterWindowsPlugin::HandleMethodCall(
     result->Success(flutter::EncodableValue(true));
     return;
   }
+  if (method == "isProcessAudioCaptureSupported") {
+    result->Success(flutter::EncodableValue(IsProcessLoopbackSupported()));
+    return;
+  }
   if (method == "listAudioInputDevices") {
     result->Success(ListEndpoints(eCapture));
     return;
@@ -244,10 +280,18 @@ void AudioFlutterWindowsPlugin::HandleMethodCall(
     return;
   }
   if (method == "listAudioProcesses") {
-    // This implementation taps a render endpoint's mix, so there is no
-    // per-process list. See the package README for the process-loopback
-    // follow-up.
-    result->Success(flutter::EncodableValue(flutter::EncodableList()));
+    flutter::EncodableList encoded;
+    for (const AudioProcessInfo& process : ListAudioRenderProcesses()) {
+      flutter::EncodableMap entry;
+      entry[flutter::EncodableValue("processId")] =
+          flutter::EncodableValue(static_cast<int64_t>(process.process_id));
+      entry[flutter::EncodableValue("bundleId")] =
+          flutter::EncodableValue(process.application_id);
+      entry[flutter::EncodableValue("isProducingAudio")] =
+          flutter::EncodableValue(process.is_producing_audio);
+      encoded.push_back(flutter::EncodableValue(std::move(entry)));
+    }
+    result->Success(flutter::EncodableValue(std::move(encoded)));
     return;
   }
 
@@ -323,6 +367,24 @@ void AudioFlutterWindowsPlugin::PrepareCapture(
   config.overflow_policy =
       ParseOverflowPolicy(StringArg(arguments, "overflowPolicy"));
   config.endpoint_id = StringArg(arguments, "inputDeviceId");
+  config.process_ids = ProcessIdsArg(arguments, "processIds");
+
+  const flutter::EncodableValue* encoded_process_ids =
+      Find(arguments, "processIds");
+  const auto* requested_process_ids = encoded_process_ids == nullptr
+                                          ? nullptr
+                                          : std::get_if<flutter::EncodableList>(
+                                                encoded_process_ids);
+  if (encoded_process_ids != nullptr && requested_process_ids == nullptr) {
+    result->Error("InvalidProcessIds", "processIds must be a list");
+    return;
+  }
+  if (requested_process_ids != nullptr && !requested_process_ids->empty() &&
+      config.process_ids.empty()) {
+    result->Error("InvalidProcessIds",
+                  "processIds must contain unique positive 32-bit values");
+    return;
+  }
 
   if (config.sample_rate <= 0 || config.channel_count <= 0) {
     result->Error("InvalidFormat", "sample rate and channels must be positive");
@@ -359,7 +421,9 @@ void AudioFlutterWindowsPlugin::PrepareCapture(
   info[flutter::EncodableValue("trackId")] = flutter::EncodableValue(
       config.kind == CaptureKind::kMicrophone ? "microphone" : "systemAudio");
   info[flutter::EncodableValue("clockId")] =
-      flutter::EncodableValue("wasapi");
+      flutter::EncodableValue("windows.qpc");
+  info[flutter::EncodableValue("timingQuality")] =
+      flutter::EncodableValue("nativeMapped");
   info[flutter::EncodableValue("sampleRate")] =
       flutter::EncodableValue(config.sample_rate);
   info[flutter::EncodableValue("channelCount")] =

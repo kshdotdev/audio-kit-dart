@@ -30,15 +30,10 @@ abstract final class AudioFlutterWindows {
 /// [listSystemAudioSources] enumerates the render endpoints available for the
 /// latter, mirroring the Linux implementation's affordance.
 ///
-/// ## Unsupported request fields
-///
-/// [PlatformCaptureRequest.processIds] and
-/// [PlatformCaptureRequest.rawRecordingPath] are rejected rather than ignored.
-/// Per-process loopback needs `AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`
-/// (Windows 10 20H1+) which this implementation does not yet use, and
-/// source-side recording is not implemented natively. Honouring either request
-/// silently would hand back audio that does not match what was asked for, so
-/// both fail loudly at [prepareCapture]. Both are tracked as follow-ups.
+/// Process IDs use Windows application loopback and are never widened to a
+/// render-endpoint mix. Microsoft supports that activation contract from OS
+/// build 20348; older Windows 10 hosts remain fully usable for explicit system
+/// mix capture but report application sources as unavailable.
 final class WindowsAudioFlutterPlatform extends AudioFlutterPlatform {
   WindowsAudioFlutterPlatform({
     MethodChannel? methodChannel,
@@ -69,11 +64,24 @@ final class WindowsAudioFlutterPlatform extends AudioFlutterPlatform {
     PlatformCaptureRequest request,
   ) async {
     if (request.processIds.isNotEmpty) {
-      throw UnsupportedError(
-        'UnsupportedProcessCapture: audio_flutter_windows cannot target '
-        'individual processes; leave processIds empty to capture the render '
-        'endpoint mix',
-      );
+      if (request.kind != PlatformCaptureKind.systemAudio) {
+        throw UnsupportedError(
+          'UnsupportedProcessCapture: process IDs are valid only for system '
+          'audio capture',
+        );
+      }
+      if (request.inputDeviceId != null) {
+        throw UnsupportedError(
+          'UnsupportedProcessCaptureEndpoint: Windows process loopback spans '
+          'render endpoints and cannot also select an endpoint',
+        );
+      }
+      if (!await isProcessAudioCaptureSupported()) {
+        throw UnsupportedError(
+          'UnsupportedProcessCapture: Windows application loopback requires '
+          'OS build 20348 or newer',
+        );
+      }
     }
     if (request.rawRecordingPath != null) {
       throw UnsupportedError(
@@ -149,6 +157,166 @@ final class WindowsAudioFlutterPlatform extends AudioFlutterPlatform {
       ) ??
       false;
 
+  /// Whether the host implements Microsoft's application-loopback activation.
+  Future<bool> isProcessAudioCaptureSupported() async =>
+      await _method.invokeMethod<bool>(kMethodIsProcessAudioCaptureSupported) ??
+      false;
+
+  @override
+  Future<PlatformCaptureBackendInfo> captureBackendInfo() async {
+    final bool systemCaptureSupported = await isSystemAudioCaptureSupported();
+    final bool processCaptureSupported = await isProcessAudioCaptureSupported();
+    return PlatformCaptureBackendInfo(
+      backendId: 'audio_flutter.windows.wasapi',
+      displayName: 'Windows WASAPI capture',
+      platform: 'windows',
+      sourceKinds: <PlatformCaptureSourceKind>{
+        PlatformCaptureSourceKind.microphone,
+        if (systemCaptureSupported) PlatformCaptureSourceKind.systemMix,
+        if (processCaptureSupported) ...<PlatformCaptureSourceKind>{
+          PlatformCaptureSourceKind.application,
+          PlatformCaptureSourceKind.browser,
+        },
+      },
+      capabilities: <PlatformCaptureCapability>{
+        if (systemCaptureSupported) PlatformCaptureCapability.systemMix,
+        PlatformCaptureCapability.nativeMonotonicClock,
+        if (processCaptureSupported) ...<PlatformCaptureCapability>{
+          PlatformCaptureCapability.processFiltering,
+          PlatformCaptureCapability.applicationFiltering,
+        },
+      },
+    );
+  }
+
+  @override
+  Future<List<PlatformCaptureSourceInfo>> listCaptureSources() async {
+    final List<PlatformAudioInputDevice> inputs = await listAudioInputDevices();
+    final bool systemCaptureSupported = await isSystemAudioCaptureSupported();
+    final bool processCaptureSupported = await isProcessAudioCaptureSupported();
+    final List<PlatformAudioInputDevice> outputs = systemCaptureSupported
+        ? await listSystemAudioSources()
+        : const <PlatformAudioInputDevice>[];
+    final List<PlatformAudioProcess> processes = processCaptureSupported
+        ? await listAudioProcesses()
+        : const <PlatformAudioProcess>[];
+
+    return <PlatformCaptureSourceInfo>[
+      if (inputs.isEmpty)
+        const PlatformCaptureSourceInfo(
+          sourceId: 'windows.microphone.unavailable',
+          kind: PlatformCaptureSourceKind.microphone,
+          displayName: 'Microphone',
+          availability: PlatformCaptureSourceAvailability.unavailable,
+          captureKind: PlatformCaptureKind.microphone,
+          timingQuality: PlatformCaptureTimingQuality.nativeMapped,
+          availabilityCode: 'windows_microphone_endpoint_unavailable',
+          availabilityReason: 'No active WASAPI capture endpoint is available.',
+        )
+      else
+        for (final PlatformAudioInputDevice input in inputs)
+          PlatformCaptureSourceInfo(
+            sourceId: 'windows.microphone.${Uri.encodeComponent(input.id)}',
+            kind: PlatformCaptureSourceKind.microphone,
+            displayName: input.label,
+            availability: PlatformCaptureSourceAvailability.available,
+            captureKind: PlatformCaptureKind.microphone,
+            timingQuality: PlatformCaptureTimingQuality.nativeMapped,
+            isDefault: input.isDefault,
+            nativeSourceId: input.id,
+            inputDeviceId: input.id,
+          ),
+      if (!systemCaptureSupported || outputs.isEmpty)
+        PlatformCaptureSourceInfo(
+          sourceId: 'windows.system-mix.unavailable',
+          kind: PlatformCaptureSourceKind.systemMix,
+          displayName: 'System audio mix',
+          availability: PlatformCaptureSourceAvailability.unavailable,
+          captureKind: PlatformCaptureKind.systemAudio,
+          timingQuality: PlatformCaptureTimingQuality.nativeMapped,
+          capabilities: const <PlatformCaptureCapability>{
+            PlatformCaptureCapability.systemMix,
+          },
+          availabilityCode: systemCaptureSupported
+              ? 'windows_render_endpoint_unavailable'
+              : 'windows_wasapi_loopback_unavailable',
+          availabilityReason: systemCaptureSupported
+              ? 'No active WASAPI render endpoint is available for loopback.'
+              : 'WASAPI loopback capture is unavailable on this host.',
+        )
+      else
+        for (final PlatformAudioInputDevice output in outputs)
+          PlatformCaptureSourceInfo(
+            sourceId: 'windows.system-mix.${Uri.encodeComponent(output.id)}',
+            kind: PlatformCaptureSourceKind.systemMix,
+            displayName: output.label,
+            availability: PlatformCaptureSourceAvailability.available,
+            captureKind: PlatformCaptureKind.systemAudio,
+            timingQuality: PlatformCaptureTimingQuality.nativeMapped,
+            capabilities: const <PlatformCaptureCapability>{
+              PlatformCaptureCapability.systemMix,
+            },
+            isDefault: output.isDefault,
+            nativeSourceId: output.id,
+            inputDeviceId: output.id,
+          ),
+      for (final PlatformAudioProcess process in processes)
+        PlatformCaptureSourceInfo(
+          sourceId:
+              'windows.${_isBrowserProcess(process.bundleId) ? 'browser' : 'application'}.'
+              '${process.processId}',
+          kind: _isBrowserProcess(process.bundleId)
+              ? PlatformCaptureSourceKind.browser
+              : PlatformCaptureSourceKind.application,
+          displayName: process.bundleId,
+          availability: PlatformCaptureSourceAvailability.available,
+          captureKind: PlatformCaptureKind.systemAudio,
+          timingQuality: PlatformCaptureTimingQuality.nativeMapped,
+          capabilities: const <PlatformCaptureCapability>{
+            PlatformCaptureCapability.processFiltering,
+            PlatformCaptureCapability.applicationFiltering,
+          },
+          processIds: <int>[process.processId],
+          nativeSourceId: '${process.processId}',
+          applicationId: process.bundleId,
+        ),
+      if (!processes.any(
+        (PlatformAudioProcess process) => !_isBrowserProcess(process.bundleId),
+      ))
+        PlatformCaptureSourceInfo(
+          sourceId: 'windows.application.unavailable',
+          kind: PlatformCaptureSourceKind.application,
+          displayName: 'Application audio',
+          availability: PlatformCaptureSourceAvailability.unavailable,
+          captureKind: PlatformCaptureKind.systemAudio,
+          timingQuality: PlatformCaptureTimingQuality.nativeMapped,
+          availabilityCode: processCaptureSupported
+              ? 'windows_audio_process_unavailable'
+              : 'windows_process_loopback_os_unsupported',
+          availabilityReason: processCaptureSupported
+              ? 'No active render session exposes a local process ID.'
+              : 'Application isolation requires Windows OS build 20348 or newer; Windows 10 22H2 build 19045 supports system-mix capture only.',
+        ),
+      if (!processes.any(
+        (PlatformAudioProcess process) => _isBrowserProcess(process.bundleId),
+      ))
+        PlatformCaptureSourceInfo(
+          sourceId: 'windows.browser.unavailable',
+          kind: PlatformCaptureSourceKind.browser,
+          displayName: 'Browser audio',
+          availability: PlatformCaptureSourceAvailability.unavailable,
+          captureKind: PlatformCaptureKind.systemAudio,
+          timingQuality: PlatformCaptureTimingQuality.nativeMapped,
+          availabilityCode: processCaptureSupported
+              ? 'windows_browser_audio_process_unavailable'
+              : 'windows_process_loopback_os_unsupported',
+          availabilityReason: processCaptureSupported
+              ? 'No active browser render session exposes a local process ID.'
+              : 'Browser isolation requires Windows OS build 20348 or newer; Windows 10 22H2 build 19045 supports system-mix capture only.',
+        ),
+    ];
+  }
+
   @override
   Future<List<PlatformAudioInputDevice>> listAudioInputDevices() =>
       _invokeDeviceList(kMethodListAudioInputDevices);
@@ -161,8 +329,6 @@ final class WindowsAudioFlutterPlatform extends AudioFlutterPlatform {
   Future<List<PlatformAudioInputDevice>> listSystemAudioSources() =>
       _invokeDeviceList(kMethodListSystemAudioSources);
 
-  /// Always empty: this implementation taps a render endpoint's mix, so there is
-  /// no per-process list to choose from. See the class docs.
   @override
   Future<List<PlatformAudioProcess>> listAudioProcesses() async {
     final List<Object?>? reply = await _method.invokeMethod<List<Object?>>(
@@ -251,4 +417,18 @@ final class WindowsAudioFlutterPlatform extends AudioFlutterPlatform {
     }
     return reply;
   }
+}
+
+bool _isBrowserProcess(String applicationId) {
+  final String value = applicationId.toLowerCase();
+  return <String>[
+    'chrome',
+    'chromium',
+    'firefox',
+    'msedge',
+    'microsoft-edge',
+    'brave',
+    'opera',
+    'vivaldi',
+  ].any(value.contains);
 }

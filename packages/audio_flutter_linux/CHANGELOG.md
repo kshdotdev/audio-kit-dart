@@ -8,6 +8,9 @@
   `paplay` and falls back to `pw-play`.
 - Source targeting, monitor resolution from the default sink, and input/monitor
   enumeration via `pactl`.
+- Exact active render-stream capture through PulseAudio/PipeWire-Pulse sink
+  inputs and `parecord --monitor-stream`, with source/PID revalidation and no
+  broad `pw-record` fallback.
 - Bounded frame ring honouring `maxBufferedDuration` and every
   `PlatformCaptureOverflowPolicy`, drained by `readCaptureFrames`.
 - Stall watchdog reporting `SystemCaptureDead`, plus process-exit failures

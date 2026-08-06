@@ -1,5 +1,5 @@
 name: audio_flutter_windows
-description: Windows implementation of audio_flutter - WASAPI loopback and microphone capture plus render playback.
+description: Windows audio_flutter capture with WASAPI process/system loopback, microphones, and render playback.
 version: 0.1.0
 resolution: workspace
 homepage: https://github.com/kshdotdev/audio-kit-dart

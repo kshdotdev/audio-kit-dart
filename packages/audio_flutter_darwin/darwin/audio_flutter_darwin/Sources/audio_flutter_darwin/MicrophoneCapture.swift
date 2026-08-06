@@ -24,12 +24,12 @@ final class MicrophoneCaptureSession: NativeCaptureSession {
   )
   private let workRing: CaptureWorkRing
   private let lifecycle = NSLock()
-  private let running = OSAllocatedUnfairLock(initialState: false)
-  private let failureScheduled = OSAllocatedUnfairLock(initialState: false)
+  private let running = CompatibleUnfairLock(initialState: false)
+  private let failureScheduled = CompatibleUnfairLock(initialState: false)
   #if os(macOS)
-    private let holdsActivity = OSAllocatedUnfairLock(initialState: false)
+    private let holdsActivity = CompatibleUnfairLock(initialState: false)
   #endif
-  private let renderCycles = OSAllocatedUnfairLock(initialState: Int64(0))
+  private let renderCycles = CompatibleUnfairLock(initialState: Int64(0))
   private var assembler: CaptureFrameAssembler?
   private var converter: PersistentAudioConverter?
   private var recorder: RawAudioRecorder?

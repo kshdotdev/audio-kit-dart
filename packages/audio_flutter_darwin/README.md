@@ -12,4 +12,6 @@ Applications should depend on
 implementation automatically on Apple platforms.
 
 The initial platform scope is macOS 14+, iOS 17+, and system capture on macOS
-14.4+ where the required Core Audio APIs are available.
+14.4+ where the required Core Audio APIs are available. The package itself
+targets macOS 12 so microphone capture and playback remain usable on macOS
+12/13; every process-tap entry point is availability-guarded.

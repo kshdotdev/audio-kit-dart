@@ -153,9 +153,13 @@ inline std::string Utf8FromWide(const wchar_t* wide) {
   if (size <= 1) {
     return std::string();
   }
-  std::string out(static_cast<size_t>(size - 1), '\0');
+  // `size` includes the trailing NUL. Allocate it before asking Win32 to
+  // write `size` bytes, then remove it from the C++ string. Allocating
+  // `size - 1` and still passing `size` would write one byte past the buffer.
+  std::string out(static_cast<size_t>(size), '\0');
   ::WideCharToMultiByte(CP_UTF8, 0, wide, -1, out.data(), size, nullptr,
                         nullptr);
+  out.resize(static_cast<size_t>(size - 1));
   return out;
 }
 
@@ -169,10 +173,11 @@ inline std::wstring WideFromUtf8(const std::string& utf8) {
   if (size <= 1) {
     return std::wstring();
   }
-  // `size` counts the terminator; size the string without it so c_str() is
-  // terminated exactly once.
-  std::wstring out(static_cast<size_t>(size - 1), L'\0');
+  // `size` includes the trailing NUL. Give Win32 the full buffer and remove
+  // the terminator afterwards; std::wstring::c_str() supplies its own.
+  std::wstring out(static_cast<size_t>(size), L'\0');
   ::MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, out.data(), size);
+  out.resize(static_cast<size_t>(size - 1));
   return out;
 }
 

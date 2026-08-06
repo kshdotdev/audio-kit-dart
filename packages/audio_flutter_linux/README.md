@@ -21,25 +21,37 @@ addressable by name. `PlatformCaptureRequest.inputDeviceId` therefore carries a
 | Capture kind | `inputDeviceId` set | `inputDeviceId` null |
 |---|---|---|
 | `microphone` | that source is recorded | the tool's own default input |
-| `systemAudio` | that source is recorded (normally a `.monitor`) | the default sink's monitor, resolved with `pactl get-default-sink` |
+| `systemAudio` | that source is recorded (and must be a `.monitor`) | the default sink's monitor, resolved with `pactl get-default-sink` |
 
-No new request field was added: a separate `sourceId` would duplicate
-`inputDeviceId` on a platform where both kinds address the same namespace, and
-it would collide in name with `PlatformCaptureSessionInfo.sourceId`, which
-already means something else.
+Application capture combines the normalized source's `inputDeviceId` selector
+with its exact `processIds`; ordinary microphone and monitor capture still use
+the same source namespace. A missing or non-monitor system-audio selector is
+rejected rather than falling back to the default microphone.
 
 `listAudioInputDevices()` returns the non-monitor sources.
 `listSystemAudioSources()` — a Linux-only addition, not part of the platform
 contract — returns the monitors, so a UI can offer them for selection.
-`PlatformCaptureRequest.processIds` has no Linux equivalent and is ignored;
-`listAudioProcesses()` is always empty, because a monitor mixes a whole sink and
-there is nothing analogous to a Core Audio per-process tap.
+
+For isolated application capture, Pulse-compatible sound servers expose active
+render streams as sink inputs. `pactl --format=json list sink-inputs` supplies
+the stream index and local process metadata; `parecord --monitor-stream=INDEX`
+uses PulseAudio's `pa_stream_set_monitor_stream` path to record exactly that
+stream. PipeWire hosts are supported through `pipewire-pulse` when they expose
+the same sink-input contract.
+
+Each addressable stream is a normalized application/browser source with its
+exact PID. The stream is revalidated at prepare and again immediately before
+allocation. A broader
+PID set is rejected because one sink-input selector cannot represent it, and
+`pw-record` is deliberately not used as a fallback for these sources because it
+would broaden capture to a node or monitor mix.
 
 ## Permissions
 
 Linux has no system-audio permission gate: monitor sources are readable by any
 client of the running sound server. `isSystemAudioCaptureSupported()` reports
-whether a capture tool **and** `pactl` are installed, and
+whether a capture tool and `pactl` are installed **and a monitor is actually
+exposed**, and
 `requestSystemAudioCapturePermission()` mirrors it. Both answer "is the
 mechanism present", never "did a user grant something".
 
@@ -75,8 +87,10 @@ backpressure is the child's stdin: every write awaits its flush.
 command line, parse, and lifecycle path is unit-tested through an injected
 process seam, and that suite runs on any host — but no audio has been captured
 or played on Linux hardware. Treat argument compatibility across PulseAudio and
-PipeWire versions, monitor availability, and end-to-end latency as unverified
-until that run happens.
+PipeWire versions, sink-input monitoring, monitor availability, and end-to-end
+latency as unverified until that run happens. Native PipeWire nodes without the
+Pulse compatibility service remain explicit unavailable application sources;
+they are never treated as isolated merely because `pw-record` can name a node.
 
 ## Attribution
 

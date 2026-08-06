@@ -53,12 +53,13 @@ void main() {
         'frameDurationMicros': 100000,
         'maxBufferedDurationMicros': 2000000,
         'overflowPolicy': 'dropOldest',
+        'processIds': <int>[],
         'inputDeviceId': '{0.0.0.render}',
       });
     });
 
     test(
-      'rejects per-process capture instead of silently widening it',
+      'rejects per-process capture on an unsupported OS instead of widening',
       () async {
         await expectLater(
           platform.prepareCapture(
@@ -79,9 +80,42 @@ void main() {
             ),
           ),
         );
-        expect(channel.calls, isEmpty);
+        expect(
+          channel.calls.single.method,
+          kMethodIsProcessAudioCaptureSupported,
+        );
       },
     );
+
+    test('forwards every selected process to native loopback', () async {
+      channel.replies[kMethodIsProcessAudioCaptureSupported] = true;
+      channel.replies[kMethodPrepareCapture] = <Object?, Object?>{
+        'sessionId': 12,
+        'sourceId': 'process:4242,4343',
+        'trackId': 'them',
+        'clockId': 'windows.qpc',
+        'timingQuality': 'nativeMapped',
+        'sampleRate': 16000,
+        'channelCount': 1,
+      };
+
+      final PlatformCaptureSessionInfo info = await platform.prepareCapture(
+        const PlatformCaptureRequest(
+          kind: PlatformCaptureKind.systemAudio,
+          outputFormat: PlatformPcmFormat(sampleRate: 16000, channelCount: 1),
+          processIds: <int>[4242, 4343],
+        ),
+      );
+
+      expect(info.sourceId, 'process:4242,4343');
+      expect(info.timingQuality, PlatformCaptureTimingQuality.nativeMapped);
+      expect(channel.calls.last.method, kMethodPrepareCapture);
+      expect(
+        channel.calls.last.arguments,
+        containsPair('processIds', <int>[4242, 4343]),
+      );
+      expect(channel.calls.last.arguments, containsPair('inputDeviceId', null));
+    });
 
     test(
       'rejects source-side recording instead of silently dropping it',
@@ -208,8 +242,10 @@ void main() {
 
     test('treats a null capability reply as unsupported', () async {
       channel.replies[kMethodIsSystemAudioCaptureSupported] = null;
+      channel.replies[kMethodIsProcessAudioCaptureSupported] = null;
 
       expect(await platform.isSystemAudioCaptureSupported(), isFalse);
+      expect(await platform.isProcessAudioCaptureSupported(), isFalse);
     });
 
     test('decodes input devices and render sources', () async {
@@ -241,6 +277,125 @@ void main() {
       channel.replies[kMethodListAudioProcesses] = <Object?>[];
 
       expect(await platform.listAudioProcesses(), isEmpty);
+    });
+
+    test(
+      'normalizes WASAPI sources and exposes unsupported process capture',
+      () async {
+        channel.replies[kMethodIsSystemAudioCaptureSupported] = true;
+        channel.replies[kMethodListAudioInputDevices] = <Object?>[
+          <Object?, Object?>{
+            'id': '{mic}',
+            'label': 'Microphone',
+            'isDefault': true,
+          },
+        ];
+        channel.replies[kMethodListSystemAudioSources] = <Object?>[
+          <Object?, Object?>{
+            'id': '{speakers}',
+            'label': 'Speakers',
+            'isDefault': true,
+          },
+        ];
+
+        final PlatformCaptureBackendInfo backend = await platform
+            .captureBackendInfo();
+        final List<PlatformCaptureSourceInfo> sources = await platform
+            .listCaptureSources();
+
+        expect(backend.backendId, 'audio_flutter.windows.wasapi');
+        expect(
+          backend.capabilities,
+          contains(PlatformCaptureCapability.systemMix),
+        );
+        expect(
+          sources
+              .singleWhere(
+                (PlatformCaptureSourceInfo source) =>
+                    source.kind == PlatformCaptureSourceKind.microphone,
+              )
+              .isDefault,
+          isTrue,
+        );
+        expect(
+          sources
+              .singleWhere(
+                (PlatformCaptureSourceInfo source) =>
+                    source.kind == PlatformCaptureSourceKind.systemMix,
+              )
+              .isDefault,
+          isTrue,
+        );
+        expect(
+          sources
+              .singleWhere(
+                (PlatformCaptureSourceInfo source) =>
+                    source.kind == PlatformCaptureSourceKind.systemMix,
+              )
+              .timingQuality,
+          PlatformCaptureTimingQuality.nativeMapped,
+        );
+        final PlatformCaptureSourceInfo application = sources.singleWhere(
+          (PlatformCaptureSourceInfo source) =>
+              source.kind == PlatformCaptureSourceKind.application,
+        );
+        expect(
+          application.availability,
+          PlatformCaptureSourceAvailability.unavailable,
+        );
+        expect(
+          application.availabilityCode,
+          'windows_process_loopback_os_unsupported',
+        );
+      },
+    );
+
+    test('normalizes active application and browser render sessions', () async {
+      channel.replies[kMethodIsSystemAudioCaptureSupported] = true;
+      channel.replies[kMethodIsProcessAudioCaptureSupported] = true;
+      channel.replies[kMethodListAudioInputDevices] = <Object?>[];
+      channel.replies[kMethodListSystemAudioSources] = <Object?>[];
+      channel.replies[kMethodListAudioProcesses] = <Object?>[
+        <Object?, Object?>{
+          'processId': 4242,
+          'bundleId': 'chrome.exe',
+          'isProducingAudio': true,
+        },
+        <Object?, Object?>{
+          'processId': 4343,
+          'bundleId': 'Zoom.exe',
+          'isProducingAudio': true,
+        },
+      ];
+
+      final PlatformCaptureBackendInfo backend = await platform
+          .captureBackendInfo();
+      final List<PlatformCaptureSourceInfo> sources = await platform
+          .listCaptureSources();
+
+      expect(
+        backend.capabilities,
+        containsAll(<PlatformCaptureCapability>[
+          PlatformCaptureCapability.processFiltering,
+          PlatformCaptureCapability.applicationFiltering,
+          PlatformCaptureCapability.nativeMonotonicClock,
+        ]),
+      );
+      final PlatformCaptureSourceInfo browser = sources.singleWhere(
+        (PlatformCaptureSourceInfo source) =>
+            source.kind == PlatformCaptureSourceKind.browser,
+      );
+      final PlatformCaptureSourceInfo application = sources.singleWhere(
+        (PlatformCaptureSourceInfo source) =>
+            source.kind == PlatformCaptureSourceKind.application,
+      );
+      expect(browser.processIds, <int>[4242]);
+      expect(browser.applicationId, 'chrome.exe');
+      expect(application.processIds, <int>[4343]);
+      expect(
+        application.availability,
+        PlatformCaptureSourceAvailability.available,
+      );
     });
   });
 
