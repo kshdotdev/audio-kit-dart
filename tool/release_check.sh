@@ -52,6 +52,10 @@ tar \
   --exclude=build \
   -C "$package_dir" \
   -cf - . | tar -C "$standalone_dir" -xf -
-sed -i.bak '/^resolution:[[:space:]]*workspace[[:space:]]*$/d' \
-  "$standalone_dir/pubspec.yaml"
+# Strip the workspace marker from EVERY copied pubspec, not just the root:
+# a nested example that is itself a workspace member (audio_flutter/example)
+# otherwise makes the standalone `pub get` fail with "found no workspace
+# root including it in parent directories".
+find "$standalone_dir" -name pubspec.yaml \
+  -exec sed -i.bak '/^resolution:[[:space:]]*workspace[[:space:]]*$/d' {} +
 "$dart_bin" pub -C "$standalone_dir" get
