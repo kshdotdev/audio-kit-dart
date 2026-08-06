@@ -27,7 +27,10 @@ pub.dev before publishing a dependent package:
 This is the same order `tool/publish_dry_run.sh` iterates; keep the two in
 sync. Four of those packages are at `0.1.0` but have never been
 published: `audio_flutter_linux`, `audio_flutter_windows`, `audio_aec`, and
-`speech_sherpa`.
+`speech_sherpa`. A fifth workspace member, `sherpa_onnx_macos`, is permanently
+unpublished (`publish_to: none`): it is a private macOS 12-compatible binary
+override for `sherpa_onnx` and is deliberately absent from the publish order
+and from `tool/publish_dry_run.sh`.
 
 The [conversation-kit-dart](https://github.com/kshdotdev/conversation-kit-dart)
 packages (`speech_pipeline`, `turn_detection`, `transcript_kit`, `meeting_kit`,

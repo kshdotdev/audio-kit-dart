@@ -225,6 +225,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Verify sherpa-onnx macOS deployment targets
+        run: ./tool/sherpa_macos/verify.sh
       # The committed pubspec_overrides.yaml resolves fluidaudio_dart and
       # mlx_audio from sibling checkouts because the workspace compiles against
       # their unreleased 0.4.0 / 0.2.1 surfaces. Clone the siblings on CI until

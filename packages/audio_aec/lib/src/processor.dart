@@ -23,7 +23,7 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 
 import 'bindings.dart';
-import 'native_asset_bindings.dart';
+import 'runtime_binding_resolver.dart';
 
 /// AEC3 echo metrics. Every field is `null` until AEC3 has a value.
 final class AecMetrics {
@@ -160,9 +160,9 @@ final class AecProcessor implements AecEngine {
     int sampleRate = 16000,
     int channels = 1,
   }) {
-    final AecBindings bindings =
-        (libraryPath == null ? NativeAssetAecBindings.tryResolve() : null) ??
-        FfiAecBindings.open(libraryPath: libraryPath);
+    final AecBindings bindings = resolveAecRuntimeBindings(
+      libraryPath: libraryPath,
+    );
     return AecProcessor.fromBindings(
       bindings,
       sampleRate: sampleRate,
@@ -179,12 +179,11 @@ final class AecProcessor implements AecEngine {
     int sampleRate = 16000,
     int channels = 1,
   }) {
-    if (sampleRate <= 0 || sampleRate % 100 != 0) {
+    if (!kSupportedAecSampleRates.contains(sampleRate)) {
       throw ArgumentError.value(
         sampleRate,
         'sampleRate',
-        'Must be positive and a multiple of 100 so a 10 ms block is a whole '
-            'number of samples.',
+        'WebRTC AudioProcessing supports only ${kSupportedAecSampleRates.join(', ')} Hz.',
       );
     }
     if (channels != 1) {
@@ -316,3 +315,9 @@ final class AecProcessor implements AecEngine {
     }
   }
 }
+
+/// Sample rates accepted by WebRTC AudioProcessing for the mono AEC path.
+///
+/// Keeping this explicit prevents a superficially valid 10 ms block size (for
+/// example 44.1 kHz) from reaching native code that does not support it.
+const Set<int> kSupportedAecSampleRates = <int>{8000, 16000, 32000, 48000};

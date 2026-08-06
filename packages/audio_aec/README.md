@@ -8,8 +8,10 @@ wrongly attributed to the local speaker. This package feeds a system loopback
 capture to AEC3 as the far-end reference and subtracts it from the microphone at
 the signal level.
 
-> **This package does not ship a native library.** It is unusable until you
-> supply one. See [Native library (risk R4)](#native-library-risk-r4).
+> **This checkout does not yet pin a released native library.** Until the first
+> reviewed native release is published and its hashes are committed, supply a
+> local or explicitly pinned binary. See
+> [Native library (risk R4)](#native-library-risk-r4).
 
 ## Layers
 
@@ -45,14 +47,16 @@ cancel. It is *not* a fallback for a missing library: that surfaces as
 
 ## Contract
 
-- **Mono float32, 16 kHz.** The engine is created for one sample rate and the
-  filter rejects a capture that disagrees, because feeding AEC3 the wrong rate
-  produces no error and no cancellation. Resample and downmix upstream.
-- **One 10 ms block per native call**, 160 samples at 16 kHz — the unit
-  `AudioProcessing::GetFrameSize` defines. `AecProcessor` throws on any other
-  size rather than asserting, since a wrong-sized block is a memory-correctness
-  problem, not a wrong number. Chunk sizes coming off a capture backend are
-  chopped to that unit by `AecBlockAccumulator`.
+- **Mono float32 at a WebRTC-supported rate (8, 16, 32, or 48 kHz).** The
+  engine is created for one sample rate and the filter rejects a capture that
+  disagrees, because feeding AEC3 the wrong rate produces no error and no
+  cancellation. Concepta Copilot uses 48 kHz; resample and downmix upstream for
+  any other capture format.
+- **One 10 ms block per native call**, from 80 samples at 8 kHz through 480 at
+  48 kHz — the unit `AudioProcessing::GetFrameSize` defines. `AecProcessor`
+  throws on any other size rather than asserting, since a wrong-sized block is
+  a memory-correctness problem, not a wrong number. Chunk sizes coming off a
+  capture backend are chopped to that unit by `AecBlockAccumulator`.
 - **One far-end block per near-end block.** When the loopback stalls, the
   reference is zero-padded rather than left to go stale, and
   `referenceBlocksZeroPadded` counts it.
@@ -120,7 +124,7 @@ place in the graph where audio makes a lossy round trip:
 | Far-end reference feed | float32 → int16 |
 | Capture in and out | float32 → int16 → float32 |
 
-At 16 kHz mono the conversion cost is negligible; the reason to state it is
+At the supported mono rates the conversion cost is negligible; the reason to state it is
 precision, not performance. One round trip quantizes to within a single step
 (`1/32767`). Stacking a second one — running the AEC and then a provider that
 demands PCM16 — should be avoided by ordering the graph deliberately, not by
@@ -154,6 +158,19 @@ When nothing resolves, or a library resolves but is missing a symbol, you get an
 crashes, and there is no silent degradation. An embedder that knows its own
 bundle layout can bypass the policy with `FfiAecBindings.openFrom(candidates)`.
 
+For a settings screen or capture capability probe, use `probeAecRuntime()`.
+Unlike `NativeAssetAecBindings.available` (which answers only whether an asset
+symbol resolves), the runtime probe calls `aec_create` for the requested format
+and destroys the temporary handle before returning. `isAvailable` is therefore
+true only when that concrete engine can really instantiate:
+
+```dart
+final capability = probeAecRuntime(sampleRate: 48000);
+if (capability.isAvailable) {
+  print('AEC3 ${capability.version ?? 'unknown version'}');
+}
+```
+
 ## Native library (risk R4)
 
 **Decided: build hooks, with prebuilt binaries fetched and hash-pinned.** The
@@ -168,10 +185,11 @@ verified end to end on Dart 3.12.0 and Flutter 3.44.0 stable under `dart test`,
 
 Two things to know before depending on this package:
 
-- **No binaries are published yet.** `pinnedSha256` in
+- **This checkout declares no released binaries.** `pinnedSha256` in
   `hook/prebuilt_manifest.dart` is empty, so the hook produces nothing unless
-  you configure it (below). Until the first release, this package still
-  requires a caller-supplied library, exactly as before.
+  you configure it (below). A CI workflow or GitHub release existing is not a
+  capability claim; only reviewed hashes committed to that map enable the
+  default download path.
 - **`dart compile exe` will refuse to build.** It does not support build hooks,
   and the restriction is transitive — it applies to anything depending on
   `audio_aec`, however indirectly. Use `dart build cli --target <entrypoint>`
@@ -213,8 +231,10 @@ export AUDIO_AEC_LIBRARY="$PWD/packages/audio_aec/.native/libaec_ffi.dylib"
 Requires `git`, `meson`, `ninja`, `pkg-config`, and a C++ toolchain. Output goes
 to the gitignored `.native/`; native artifacts are never committed. The macOS
 arm64 path is exercised and produces a self-contained ~2.2 MB dylib depending
-only on system frameworks. The Linux path is carried over from the reference
-implementation unchanged and is untested here. Windows is not covered.
+only on system frameworks. Darwin source builds default
+`MACOSX_DEPLOYMENT_TARGET` to 12.0 and fail if the resulting Mach-O advertises a
+higher baseline. Linux and the new Windows MSVC recipe remain unverified until
+their target-specific workflow jobs run green.
 
 The script links with `-headerpad_max_install_names`, which is **required**, not
 cosmetic: the SDK rewrites a code asset's install name to an absolute path, and
@@ -227,6 +247,27 @@ identity (Flutter wraps it in a framework and re-signs it outright), and a
 dylib carrying *our* Developer ID inside *their* app would fail library
 validation against their Team ID. Release notarization is the one macOS
 question still open; see [`doc/DISTRIBUTION.md`](doc/DISTRIBUTION.md).
+
+### Releasing target-specific prebuilts
+
+The repository's `Build audio_aec prebuilt release` workflow is a four-runner
+contract for macOS arm64, macOS x64, Linux x64, and Windows x64. Each runner
+builds from the shared pinned WebRTC revision, loads all six ABI symbols, and
+must successfully create and destroy both 16 kHz and 48 kHz mono engines before
+its bytes are staged. A final job generates and re-verifies
+`audio_aec-prebuilt-manifest.json`, including SHA-256 and byte length for every
+binary and the third-party notice.
+
+Publication is a separate, explicit `publish_release` workflow input. When it
+is false, CI only uploads a review artifact. When true on `main`, CI refuses to
+overwrite an existing `audio_aec-native-v<artifactVersion>` tag. Even a
+successful native release does not turn on package downloads automatically:
+review the manifest, run `tool/prebuilt_release.py render-pins`, and commit the
+result to `hook/prebuilt_manifest.dart` in a later package change.
+
+The workflow contract and Windows recipe were not executed from this macOS
+development host. Until their first green run, the accurate support status is:
+macOS arm64 locally exercised; the other three target builds unverified.
 
 ### Testing without one
 

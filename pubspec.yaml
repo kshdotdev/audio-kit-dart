@@ -16,6 +16,7 @@ workspace:
   - packages/voice_flutter
   - packages/speech_fluidaudio
   - packages/speech_sherpa
+  - packages/sherpa_onnx_macos
   - packages/speech_mlx
   - packages/audio_flutter_linux
   - packages/audio_flutter_windows

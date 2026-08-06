@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Add `probeAecRuntime` / `probeAecBindings`. Availability now requires a real
+  `aec_create` followed by `aec_destroy`; resolving a library or version symbol
+  alone is not reported as usable AEC3.
+- Add pinned, target-specific native release tooling for macOS arm64/x64, Linux
+  x64, and Windows x64. Each artifact is runtime-probed on its target runner;
+  packaging generates and verifies one deterministic SHA-256 manifest and
+  refuses incomplete target sets. Publication remains an explicit manual step,
+  and built-in download hashes remain empty until reviewed and committed.
+- Add the MSVC x64 build recipe and shared WebRTC/native ABI release pins.
+
 ## 0.1.0
 
 - Initial implementation of `audio_aec`: acoustic echo cancellation for Audio

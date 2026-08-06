@@ -471,13 +471,19 @@ void main() {
   group('format validation', () {
     test('rejects a sample rate the engine was not created for', () async {
       final AudioFormat wrong = AudioFormat(sampleRate: 48000, channels: 1);
+      final bindings = FakeAecBindings();
       final AecMicFilter filter = AecMicFilter(
         near: ManualAudioSource(format: wrong),
         far: ManualAudioSource(format: wrong),
-        processor: AecProcessor.fromBindings(FakeAecBindings()),
+        processor: AecProcessor.fromBindings(bindings),
       );
 
       await expectLater(filter.prepare(), throwsA(isA<ArgumentError>()));
+      expect(
+        bindings.destroyCount,
+        1,
+        reason: 'a failed one-shot prepare has no session to own the engine',
+      );
     });
 
     test('rejects a stereo capture', () async {

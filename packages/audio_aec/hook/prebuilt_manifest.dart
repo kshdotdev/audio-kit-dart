@@ -31,12 +31,12 @@ String _extension(String os) => switch (os) {
 
 /// Default base URL for released artifacts.
 ///
-/// Overridable with the `prebuilt_url_base` user-define. The version is pinned
-/// to the package version rather than tracking `latest`, because a build hook
-/// that silently picks up a new binary is a build that is not reproducible.
+/// Overridable with the `prebuilt_url_base` user-define. The version is the
+/// native ABI release in [artifactVersion], rather than `latest`, because a
+/// build hook that silently picks up a new binary is not reproducible.
 const String defaultUrlBase =
     'https://github.com/kshdotdev/audio-kit-dart/releases/download/'
-    'audio_aec-v$artifactVersion';
+    'audio_aec-native-v$artifactVersion';
 
 /// Release tag component of [defaultUrlBase].
 ///
@@ -55,9 +55,11 @@ const String artifactVersion = '0.1.0';
 /// (pin it yourself) and `allow_unpinned` (explicitly accept the risk); neither
 /// is the default.
 ///
-/// Populate at release time with:
+/// Generate a reviewed replacement after the native workflow succeeds with:
 /// ```sh
-/// shasum -a 256 aec_ffi-macos-arm64.dylib
+/// python3 tool/prebuilt_release.py render-pins \
+///   --manifest release/audio_aec-prebuilt-manifest.json \
+///   --directory release
 /// ```
 const Map<String, String> pinnedSha256 = <String, String>{
   // 'macos-arm64': '<sha256>',
