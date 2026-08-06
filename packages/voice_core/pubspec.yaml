@@ -1,6 +1,6 @@
 name: voice_core
 description: Cancellable provider-neutral voice conversation orchestration.
-version: 0.1.0
+version: 0.2.0
 resolution: workspace
 homepage: https://github.com/kshdotdev/audio-kit-dart
 repository: https://github.com/kshdotdev/audio-kit-dart
@@ -16,7 +16,7 @@ environment:
 
 dependencies:
   audio_core: ^0.1.0
-  speech_core: ^0.1.0
+  speech_core: ^0.2.0
 
 dev_dependencies:
   test: ^1.26.3

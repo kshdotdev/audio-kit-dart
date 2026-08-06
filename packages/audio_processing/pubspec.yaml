@@ -1,6 +1,6 @@
 name: audio_processing
 description: Stateful provider-neutral PCM transforms, meters, and WAV utilities.
-version: 0.1.0
+version: 0.2.0
 resolution: workspace
 homepage: https://github.com/kshdotdev/audio-kit-dart
 repository: https://github.com/kshdotdev/audio-kit-dart

@@ -1,6 +1,6 @@
 name: audio_flutter_darwin
 description: Darwin implementation of audio_flutter capture and PCM playback.
-version: 0.1.0
+version: 0.2.0
 resolution: workspace
 homepage: https://github.com/kshdotdev/audio-kit-dart
 repository: https://github.com/kshdotdev/audio-kit-dart
@@ -19,7 +19,7 @@ environment:
   flutter: ">=3.44.0"
 
 dependencies:
-  audio_flutter_platform_interface: ^0.1.0
+  audio_flutter_platform_interface: ^0.2.0
   flutter:
     sdk: flutter
   meta: ^1.16.0
