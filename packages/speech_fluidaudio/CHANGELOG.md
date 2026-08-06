@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - Fail a synthesis that produced no audio at all with
   `fluid_tts_empty_synthesis` instead of finishing clean. Kokoro answers

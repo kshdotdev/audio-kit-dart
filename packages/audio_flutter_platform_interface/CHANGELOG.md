@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - Add `microphonePermissionStatus()` and `requestMicrophonePermission()` to
   `AudioFlutterPlatform`, returning the new

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - Added `MlxSmartTurnScorer`, a `TurnCompletionScorer` over the pinned Smart
   Turn v3.2 classifier. It declares `SpeechCapability.turnCompletion` and runs

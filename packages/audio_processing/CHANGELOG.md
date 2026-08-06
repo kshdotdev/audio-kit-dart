@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - Add `AecDelayEstimator`: envelope cross-correlation delay estimation between a
   loopback reference and a microphone capture, with recency-weighted median

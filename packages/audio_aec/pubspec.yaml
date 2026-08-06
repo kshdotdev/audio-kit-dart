@@ -15,7 +15,7 @@ environment:
 
 dependencies:
   audio_core: ^0.1.0
-  audio_processing: ^0.1.0
+  audio_processing: ^0.2.0
   ffi: ^2.1.0
   # The three below exist for `hook/build.dart` and are unused by `lib/`. They
   # must be regular dependencies, not dev_dependencies: the hook is run by

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - Add `SystemAudioProcessSelector`, a pure expansion of a target app set over a
   `FlutterSystemAudio.listProcesses()` snapshot. Tapping Teams, Chrome, or

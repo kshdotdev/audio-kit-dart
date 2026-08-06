@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - Add `SpeakerEmbedding`, a speaker vector carrying the `(providerId, modelId,
   dimension)` space that produced it, plus `speakerSimilarity` (null across
