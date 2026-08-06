@@ -8,6 +8,11 @@
   first driver is created, so a host can pin FluidAudio to its own verified
   model directory and make a missing artifact fail loudly instead of
   re-downloading. Requires `fluidaudio_dart` 0.5.0.
+- The native roots are a process-wide latch, so a runtime recreated for the
+  SAME root after a `ModelRootsLocked` rejection now proceeds (the effective
+  roots are compared, trailing slashes ignored); only a genuinely different
+  root rethrows. `ensureConfigured()` applies the configuration eagerly so a
+  host can surface that conflict with its own actionable message.
 
 - Fail a synthesis that produced no audio at all with
   `fluid_tts_empty_synthesis` instead of finishing clean. Kokoro answers

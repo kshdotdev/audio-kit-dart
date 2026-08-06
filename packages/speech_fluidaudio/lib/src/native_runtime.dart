@@ -38,6 +38,12 @@ final class FluidNativeRuntime implements FluidAudioRuntime {
 
   bool get _isClosed => _closeFuture != null;
 
+  /// Applies the host-managed roots and offline mode now instead of lazily at
+  /// the first driver, so a root conflict surfaces where the host can explain
+  /// it. Idempotent; throws `FluidAudioException` with code `ModelRootsLocked`
+  /// when a different root is already latched in this process.
+  Future<void> ensureConfigured() => _ensureConfigured();
+
   Future<void> _ensureConfigured() {
     if (_modelsRootPath == null && _ttsRootPath == null && !_offline) {
       return Future<void>.value();
@@ -48,16 +54,47 @@ final class FluidNativeRuntime implements FluidAudioRuntime {
   Future<void> _configure() async {
     final models = _models ?? native.FluidModels();
     if (_modelsRootPath != null || _ttsRootPath != null) {
-      await models.setModelRoots(
-        native.FluidModelRoots(
-          modelsRoot: _modelsRootPath,
-          ttsRoot: _ttsRootPath,
-        ),
-      );
+      try {
+        await models.setModelRoots(
+          native.FluidModelRoots(
+            modelsRoot: _modelsRootPath,
+            ttsRoot: _ttsRootPath,
+          ),
+        );
+      } on native.FluidAudioException catch (error) {
+        // The native roots are a process-wide latch: once any model instance
+        // exists they refuse to change. A new runtime asking for the roots
+        // that are already in effect is the normal recreate-after-dispose
+        // path and must succeed; only a genuinely different root is an error.
+        if (error.code != 'ModelRootsLocked') {
+          rethrow;
+        }
+        final current = await models.modelRoots();
+        final sameModels =
+            _modelsRootPath == null ||
+            _normalizePath(current.modelsRoot) == _normalizePath(_modelsRootPath);
+        final sameTts =
+            _ttsRootPath == null ||
+            _normalizePath(current.ttsRoot) == _normalizePath(_ttsRootPath);
+        if (!sameModels || !sameTts) {
+          rethrow;
+        }
+      }
     }
     if (_offline) {
       await models.setOfflineMode(true);
     }
+  }
+
+  static String? _normalizePath(String? path) {
+    if (path == null) {
+      return null;
+    }
+    var value = path;
+    while (value.length > 1 && value.endsWith('/')) {
+      value = value.substring(0, value.length - 1);
+    }
+    return value;
   }
 
   @override
