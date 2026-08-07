@@ -24,13 +24,13 @@ environment:
 dependencies:
   archive: ^4.0.0
   audio_core: ^0.1.0
-  audio_processing: ^0.1.0
+  audio_processing: ^0.2.0
   flutter:
     sdk: flutter
   http: ^1.5.0
   path: ^1.9.0
   sherpa_onnx: ^1.13.4
-  speech_core: ^0.1.0
+  speech_core: ^0.2.0
 
 dev_dependencies:
   flutter_lints: ^6.0.0

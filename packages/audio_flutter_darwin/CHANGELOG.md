@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - Implement `microphonePermissionStatus()` and `requestMicrophonePermission()`
   over `AVCaptureDevice.authorizationStatus(for: .audio)` and `requestAccess`.

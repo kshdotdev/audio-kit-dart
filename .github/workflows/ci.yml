@@ -26,16 +26,6 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # The committed pubspec_overrides.yaml resolves fluidaudio_dart and
-      # mlx_audio from sibling checkouts because the workspace compiles against
-      # their unreleased 0.4.0 / 0.2.1 surfaces. Clone the siblings on CI until
-      # those versions are on pub.dev, then delete this step together with the
-      # overrides file.
-      - name: Clone unpublished sibling engines
-        shell: bash
-        run: |
-          git clone --depth 1 https://github.com/kshdotdev/fluidaudio-dart ../fluidaudio-dart
-          git clone --depth 1 https://github.com/kshdotdev/mlx ../mlx
       - uses: flutter-actions/setup-flutter@18c66a64fb6f6d3338c63cabbc5cd6da395e7f1d
         with:
           version: 3.44.0
@@ -60,16 +50,6 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # The committed pubspec_overrides.yaml resolves fluidaudio_dart and
-      # mlx_audio from sibling checkouts because the workspace compiles against
-      # their unreleased 0.4.0 / 0.2.1 surfaces. Clone the siblings on CI until
-      # those versions are on pub.dev, then delete this step together with the
-      # overrides file.
-      - name: Clone unpublished sibling engines
-        shell: bash
-        run: |
-          git clone --depth 1 https://github.com/kshdotdev/fluidaudio-dart ../fluidaudio-dart
-          git clone --depth 1 https://github.com/kshdotdev/mlx ../mlx
       - uses: flutter-actions/setup-flutter@18c66a64fb6f6d3338c63cabbc5cd6da395e7f1d
         with:
           version: 3.44.0
@@ -102,16 +82,6 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # The committed pubspec_overrides.yaml resolves fluidaudio_dart and
-      # mlx_audio from sibling checkouts because the workspace compiles against
-      # their unreleased 0.4.0 / 0.2.1 surfaces. Clone the siblings on CI until
-      # those versions are on pub.dev, then delete this step together with the
-      # overrides file.
-      - name: Clone unpublished sibling engines
-        shell: bash
-        run: |
-          git clone --depth 1 https://github.com/kshdotdev/fluidaudio-dart ../fluidaudio-dart
-          git clone --depth 1 https://github.com/kshdotdev/mlx ../mlx
       - name: Install Flutter Linux desktop and PulseAudio prerequisites
         run: |
           sudo apt-get update
@@ -161,16 +131,6 @@ jobs:
       XDG_RUNTIME_DIR: /tmp/pulse-runtime
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # The committed pubspec_overrides.yaml resolves fluidaudio_dart and
-      # mlx_audio from sibling checkouts because the workspace compiles against
-      # their unreleased 0.4.0 / 0.2.1 surfaces. Clone the siblings on CI until
-      # those versions are on pub.dev, then delete this step together with the
-      # overrides file.
-      - name: Clone unpublished sibling engines
-        shell: bash
-        run: |
-          git clone --depth 1 https://github.com/kshdotdev/fluidaudio-dart ../fluidaudio-dart
-          git clone --depth 1 https://github.com/kshdotdev/mlx ../mlx
       - name: Install PulseAudio
         run: |
           sudo apt-get update
@@ -227,16 +187,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Verify sherpa-onnx macOS deployment targets
         run: ./tool/sherpa_macos/verify.sh
-      # The committed pubspec_overrides.yaml resolves fluidaudio_dart and
-      # mlx_audio from sibling checkouts because the workspace compiles against
-      # their unreleased 0.4.0 / 0.2.1 surfaces. Clone the siblings on CI until
-      # those versions are on pub.dev, then delete this step together with the
-      # overrides file.
-      - name: Clone unpublished sibling engines
+      # speech_fluidaudio's host-managed model roots compile against the
+      # unreleased fluidaudio_dart 0.5.0 surface; pubspec_overrides.yaml
+      # resolves it from a sibling checkout. Clone it on CI until 0.5.0 is on
+      # pub.dev, then delete this step together with the overrides file.
+      - name: Clone the unpublished fluidaudio engine
         shell: bash
         run: |
           git clone --depth 1 https://github.com/kshdotdev/fluidaudio-dart ../fluidaudio-dart
-          git clone --depth 1 https://github.com/kshdotdev/mlx ../mlx
       - uses: flutter-actions/setup-flutter@18c66a64fb6f6d3338c63cabbc5cd6da395e7f1d
         with:
           version: 3.44.0

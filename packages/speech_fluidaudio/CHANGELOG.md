@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - Add host-managed model roots to `FluidNativeRuntime`:
   `FluidNativeRuntime(modelsRootPath:, ttsRootPath:, offline:)` applies

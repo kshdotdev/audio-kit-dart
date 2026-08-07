@@ -1,6 +1,6 @@
 name: speech_deepgram
 description: Deepgram streaming STT adapter over caller-owned audio streams.
-version: 0.1.1
+version: 0.1.2
 resolution: workspace
 homepage: https://github.com/kshdotdev/audio-kit-dart
 repository: https://github.com/kshdotdev/audio-kit-dart
@@ -22,7 +22,7 @@ environment:
 
 dependencies:
   audio_core: ^0.1.0
-  speech_core: ^0.1.0
+  speech_core: ^0.2.0
   web_socket_channel: ^3.0.3
 
 dev_dependencies:

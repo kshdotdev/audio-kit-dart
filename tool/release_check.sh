@@ -47,11 +47,21 @@ find "$package_dir" \
 # selected package out of the workspace proves every hosted constraint is
 # independently consumable before the OIDC publishing job starts.
 standalone_dir="$(mktemp -d)"
+# ./example is excluded from the copy: with its workspace marker stripped it
+# resolves as a standalone project depending on the very version this run is
+# about to publish — unresolvable by construction. The published archive
+# still ships example/ from the real tree; the standalone proof is about the
+# PACKAGE's hosted constraints.
 tar \
   --exclude=.dart_tool \
   --exclude=build \
+  --exclude=./example \
   -C "$package_dir" \
   -cf - . | tar -C "$standalone_dir" -xf -
-sed -i.bak '/^resolution:[[:space:]]*workspace[[:space:]]*$/d' \
-  "$standalone_dir/pubspec.yaml"
+# Strip the workspace marker from EVERY copied pubspec, not just the root:
+# a nested example that is itself a workspace member (audio_flutter/example)
+# otherwise makes the standalone `pub get` fail with "found no workspace
+# root including it in parent directories".
+find "$standalone_dir" -name pubspec.yaml \
+  -exec sed -i.bak '/^resolution:[[:space:]]*workspace[[:space:]]*$/d' {} +
 "$dart_bin" pub -C "$standalone_dir" get

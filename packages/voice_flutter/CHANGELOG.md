@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - Add `VoiceFarEndTap`, the acoustic-echo-cancellation far-end reference for a
   voice conversation. It is one long-lived `AudioSource` fed by a succession of

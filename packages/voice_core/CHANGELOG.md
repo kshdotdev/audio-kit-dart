@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - Add opt-in full-duplex conversation mode. `VoiceDuplexMode`,
   `VoiceEchoCancellationFallback`, and `VoiceDuplexConfig` select between the
