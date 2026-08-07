@@ -30,3 +30,12 @@ jobs:
           ./tool/release_check.sh
           '${{ inputs.package }}'
           '${{ inputs.working-directory }}'
+
+  sherpa-macos-native:
+    if: inputs.package == 'speech_sherpa'
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Verify pinned sherpa-onnx macOS binaries
+        run: ./tool/sherpa_macos/verify.sh

@@ -42,6 +42,19 @@ void main() {
       expect(commands.first, contains('--channels=2'));
     });
 
+    test('isolated sink input never falls back to a monitor mix', () {
+      final List<List<String>> commands = captureCommands(
+        format: const PlatformPcmFormat(sampleRate: 16000, channelCount: 1),
+        target: null,
+        monitorStreamIndex: 42,
+      );
+
+      expect(commands, hasLength(1));
+      expect(commands.single, contains('--monitor-stream=42'));
+      expect(commands.single, isNot(contains(startsWith('--device='))));
+      expect(commands.single.first, LinuxAudioTools.parecord);
+    });
+
     test('playback mirrors the capture format arguments', () {
       final List<List<String>> commands = playbackCommands(
         format: const PlatformPcmFormat(sampleRate: 24000, channelCount: 2),
@@ -132,6 +145,7 @@ void main() {
       final List<PulseSource> sources = parseSourcesShort(kPactlSourcesShort);
 
       expect(sources, hasLength(4));
+      expect(sources.every((PulseSource source) => source.isPipeWire), isTrue);
       expect(
         sources
             .where((PulseSource s) => s.isMonitor)
@@ -162,6 +176,35 @@ void main() {
 
     test('empty output yields no sources', () {
       expect(parseSourcesShort(''), isEmpty);
+    });
+  });
+
+  group('application stream enumeration', () {
+    test('parses exact process and application metadata', () {
+      final List<PulseSinkInput> streams = parseSinkInputsJson(
+        kPactlSinkInputsJson,
+      );
+
+      expect(streams, hasLength(3));
+      expect(streams.first.index, 42);
+      expect(streams.first.processId, 4242);
+      expect(streams.first.applicationId, 'chrome');
+      expect(streams.first.displayName, 'Google Chrome');
+      expect(streams.first.isBrowser, isTrue);
+      expect(streams[1].corked, isTrue);
+      expect(streams.last.processId, isNull);
+    });
+
+    test('malformed JSON fails closed', () {
+      expect(parseSinkInputsJson('{not-json'), isEmpty);
+      expect(parseSinkInputsJson('{}'), isEmpty);
+    });
+
+    test('round-trips monitor stream selectors', () {
+      expect(pulseMonitorStreamTarget(42), 'pulse-monitor-stream:42');
+      expect(parsePulseMonitorStreamTarget('pulse-monitor-stream:42'), 42);
+      expect(parsePulseMonitorStreamTarget('pulse-monitor-stream:-1'), isNull);
+      expect(parsePulseMonitorStreamTarget('a.monitor'), isNull);
     });
   });
 

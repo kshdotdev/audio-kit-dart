@@ -20,9 +20,12 @@ import '../support/fakes.dart';
 /// path opts in explicitly:
 ///
 /// ```sh
-/// SPEECH_SHERPA_MODELS=~/models flutter test --tags integration
+/// SPEECH_SHERPA_MODELS=~/models \
+/// SPEECH_SHERPA_LIBRARY_DIR=../sherpa_onnx_macos/macos \
+/// flutter test --tags integration
 /// ```
 const String _modelsVariable = 'SPEECH_SHERPA_MODELS';
+const String _libraryVariable = 'SPEECH_SHERPA_LIBRARY_DIR';
 
 void main() {
   final modelRoot = Platform.environment[_modelsVariable];
@@ -46,7 +49,10 @@ void main() {
     test('binds the native library for this isolate', () {
       // A missing bind surfaces later as "Please initialize sherpa-onnx
       // first", which reads like a missing model rather than a missing symbol.
-      expect(ensureSherpaBindings, returnsNormally);
+      expect(
+        () => ensureSherpaBindings(Platform.environment[_libraryVariable]),
+        returnsNormally,
+      );
     });
 
     test('transcribes a spoken-word fixture', () async {

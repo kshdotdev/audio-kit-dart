@@ -1,0 +1,20 @@
+name: sherpa_onnx_macos
+description: Private macOS 12-compatible native binary override for sherpa_onnx.
+version: 1.13.4+concepta.1
+publish_to: none
+resolution: workspace
+repository: https://github.com/kshdotdev/audio-kit-dart
+
+environment:
+  sdk: ^3.12.0
+  flutter: ">=3.44.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  plugin:
+    platforms:
+      macos:
+        ffiPlugin: true

@@ -25,10 +25,10 @@ import os
     )
     private let workRing: CaptureWorkRing
     private let lifecycle = NSLock()
-    private let running = OSAllocatedUnfairLock(initialState: false)
-    private let failureScheduled = OSAllocatedUnfairLock(initialState: false)
-    private let holdsActivity = OSAllocatedUnfairLock(initialState: false)
-    private let renderCycles = OSAllocatedUnfairLock(initialState: Int64(0))
+    private let running = CompatibleUnfairLock(initialState: false)
+    private let failureScheduled = CompatibleUnfairLock(initialState: false)
+    private let holdsActivity = CompatibleUnfairLock(initialState: false)
+    private let renderCycles = CompatibleUnfairLock(initialState: Int64(0))
     /// Serial queue the HAL delivers default-output-device notifications on.
     /// Separate from `ioQueue`/`workerQueue`, which a rebuild drains.
     private let deviceListenerQueue = DispatchQueue(
@@ -721,7 +721,7 @@ import os
     /// UIDs of aggregates a live session in this process still owns. The
     /// orphan sweeper skips them; everything else carrying the prefix was
     /// leaked by a process that died before it could unwind.
-    private static let liveAggregateUids = OSAllocatedUnfairLock(
+    private static let liveAggregateUids = CompatibleUnfairLock(
       initialState: Set<String>()
     )
 

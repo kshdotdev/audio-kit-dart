@@ -23,26 +23,58 @@ const Map<String, LinuxProcessResult> _pactlResults =
         stdout: 'alsa_output.pci-0000_00_1f.3.analog-stereo\n',
         stderr: '',
       ),
+      'pactl --format=json list sink-inputs': LinuxProcessResult(
+        exitCode: 0,
+        stdout: kPactlSinkInputsJson,
+        stderr: '',
+      ),
     };
 
 void main() {
   group('support probes', () {
-    test('needs both a capture tool and pactl', () async {
-      Future<bool> supported(Set<String> installed) =>
-          LinuxAudioFlutterPlatform(
-            runner: FakeProcessRunner(installed: installed),
-          ).isSystemAudioCaptureSupported();
+    test('needs a capture tool, pactl, and an exposed monitor', () async {
+      Future<bool> supported(
+        Set<String> installed, {
+        String sources = kPactlSourcesShort,
+      }) => LinuxAudioFlutterPlatform(
+        runner: FakeProcessRunner(
+          installed: installed,
+          commandResults: <String, LinuxProcessResult>{
+            'pactl list sources short': LinuxProcessResult(
+              exitCode: 0,
+              stdout: sources,
+              stderr: '',
+            ),
+          },
+        ),
+      ).isSystemAudioCaptureSupported();
 
       expect(await supported(<String>{'parecord', 'pactl'}), isTrue);
       expect(await supported(<String>{'pw-record', 'pactl'}), isTrue);
       expect(await supported(<String>{'parecord'}), isFalse);
       expect(await supported(<String>{'pactl'}), isFalse);
       expect(await supported(<String>{}), isFalse);
+      expect(
+        await supported(
+          <String>{'parecord', 'pactl'},
+          sources: '1\talsa_input.usb-mic\tPipeWire\ts16le 1ch 48000Hz\tIDLE\n',
+        ),
+        isFalse,
+      );
     });
 
     test('permission mirrors capability, since Linux has no grant', () async {
       final LinuxAudioFlutterPlatform granted = LinuxAudioFlutterPlatform(
-        runner: FakeProcessRunner(installed: <String>{'parecord', 'pactl'}),
+        runner: FakeProcessRunner(
+          installed: <String>{'parecord', 'pactl'},
+          commandResults: const <String, LinuxProcessResult>{
+            'pactl list sources short': LinuxProcessResult(
+              exitCode: 0,
+              stdout: kPactlSourcesShort,
+              stderr: '',
+            ),
+          },
+        ),
       );
       final LinuxAudioFlutterPlatform ungranted = LinuxAudioFlutterPlatform(
         runner: FakeProcessRunner(),
@@ -96,8 +128,224 @@ void main() {
       expect(await platform.listSystemAudioSources(), isEmpty);
     });
 
-    test('there is no per-process capture on Linux', () async {
-      expect(await build().listAudioProcesses(), isEmpty);
+    test('lists only addressable local audio processes', () async {
+      final List<PlatformAudioProcess> processes = await build()
+          .listAudioProcesses();
+
+      expect(processes.map((PlatformAudioProcess p) => p.processId), <int>[
+        4242,
+        4343,
+      ]);
+      expect(processes.first.bundleId, 'chrome');
+      expect(processes.first.isProducingAudio, isTrue);
+      expect(processes.last.isProducingAudio, isFalse);
+    });
+
+    test(
+      'normalizes PipeWire monitors and addressable process streams',
+      () async {
+        final LinuxAudioFlutterPlatform platform = build();
+        final PlatformCaptureBackendInfo backend = await platform
+            .captureBackendInfo();
+        final List<PlatformCaptureSourceInfo> sources = await platform
+            .listCaptureSources();
+
+        expect(
+          backend.sourceKinds,
+          containsAll(<PlatformCaptureSourceKind>[
+            PlatformCaptureSourceKind.microphone,
+            PlatformCaptureSourceKind.application,
+            PlatformCaptureSourceKind.browser,
+            PlatformCaptureSourceKind.pipeWireMonitor,
+          ]),
+        );
+        expect(
+          backend.capabilities,
+          containsAll(<PlatformCaptureCapability>[
+            PlatformCaptureCapability.processFiltering,
+            PlatformCaptureCapability.applicationFiltering,
+          ]),
+        );
+        expect(
+          sources
+              .where(
+                (PlatformCaptureSourceInfo source) =>
+                    source.kind == PlatformCaptureSourceKind.pipeWireMonitor,
+              )
+              .length,
+          2,
+        );
+        expect(
+          sources
+              .where(
+                (PlatformCaptureSourceInfo source) =>
+                    source.kind == PlatformCaptureSourceKind.pipeWireMonitor,
+              )
+              .every(
+                (PlatformCaptureSourceInfo source) =>
+                    source.timingQuality ==
+                    PlatformCaptureTimingQuality.synthesized,
+              ),
+          isTrue,
+        );
+        final PlatformCaptureSourceInfo application = sources.singleWhere(
+          (PlatformCaptureSourceInfo source) =>
+              source.kind == PlatformCaptureSourceKind.application,
+        );
+        expect(
+          application.availability,
+          PlatformCaptureSourceAvailability.available,
+        );
+        expect(application.processIds, <int>[4343]);
+        expect(application.inputDeviceId, 'pulse-monitor-stream:43');
+        final PlatformCaptureSourceInfo browser = sources.singleWhere(
+          (PlatformCaptureSourceInfo source) =>
+              source.kind == PlatformCaptureSourceKind.browser,
+        );
+        expect(browser.processIds, <int>[4242]);
+        expect(browser.inputDeviceId, 'pulse-monitor-stream:42');
+      },
+    );
+
+    test(
+      'rejects bare process IDs instead of widening to a monitor mix',
+      () async {
+        await expectLater(
+          build().prepareCapture(
+            const PlatformCaptureRequest(
+              kind: PlatformCaptureKind.systemAudio,
+              outputFormat: PlatformPcmFormat(
+                sampleRate: 16000,
+                channelCount: 1,
+              ),
+              processIds: <int>[42],
+            ),
+          ),
+          throwsA(
+            isA<UnsupportedError>().having(
+              (UnsupportedError error) => error.message,
+              'message',
+              contains('UnsupportedProcessCapture'),
+            ),
+          ),
+        );
+      },
+    );
+
+    test('starts an exact addressable stream with no broad fallback', () async {
+      final FakeProcessRunner runner = FakeProcessRunner(
+        installed: <String>{'parecord', 'pw-record', 'pactl'},
+        commandResults: _pactlResults,
+      );
+      final LinuxAudioFlutterPlatform platform = LinuxAudioFlutterPlatform(
+        runner: runner,
+      );
+      final PlatformCaptureSessionInfo info = await platform.prepareCapture(
+        const PlatformCaptureRequest(
+          kind: PlatformCaptureKind.systemAudio,
+          outputFormat: PlatformPcmFormat(sampleRate: 16000, channelCount: 1),
+          processIds: <int>[4242],
+          inputDeviceId: 'pulse-monitor-stream:42',
+        ),
+      );
+
+      await platform.startCapture(info.sessionId);
+
+      expect(runner.startedCommands.single, contains('--monitor-stream=42'));
+      expect(runner.startedCommands.single.first, 'parecord');
+      expect(
+        runner.startedCommands.single,
+        isNot(contains(startsWith('--device='))),
+      );
+      await platform.abortCapture(info.sessionId);
+      await platform.disposeCapture(info.sessionId);
+    });
+
+    test(
+      'revalidates an addressable stream immediately before start',
+      () async {
+        final FakeProcessRunner runner = FakeProcessRunner(
+          installed: <String>{'parecord', 'pactl'},
+          commandResults: Map<String, LinuxProcessResult>.of(_pactlResults),
+        );
+        final LinuxAudioFlutterPlatform platform = LinuxAudioFlutterPlatform(
+          runner: runner,
+        );
+        final PlatformCaptureSessionInfo info = await platform.prepareCapture(
+          const PlatformCaptureRequest(
+            kind: PlatformCaptureKind.systemAudio,
+            outputFormat: PlatformPcmFormat(sampleRate: 16000, channelCount: 1),
+            processIds: <int>[4242],
+            inputDeviceId: 'pulse-monitor-stream:42',
+          ),
+        );
+        runner.commandResults['pactl --format=json list sink-inputs'] =
+            const LinuxProcessResult(exitCode: 0, stdout: '[]', stderr: '');
+
+        await expectLater(
+          platform.startCapture(info.sessionId),
+          throwsA(
+            isA<StateError>().having(
+              (StateError error) => error.message,
+              'message',
+              contains('ProcessCaptureSourceExpired'),
+            ),
+          ),
+        );
+        expect(runner.startedCommands, isEmpty);
+        await platform.disposeCapture(info.sessionId);
+      },
+    );
+
+    test('never maps missing system audio to the default microphone', () async {
+      final LinuxAudioFlutterPlatform platform = LinuxAudioFlutterPlatform(
+        runner: FakeProcessRunner(
+          installed: <String>{'parecord', 'pactl'},
+          commandResults: const <String, LinuxProcessResult>{
+            'pactl get-default-sink': LinuxProcessResult(
+              exitCode: 1,
+              stdout: '',
+              stderr: 'no default sink',
+            ),
+          },
+        ),
+      );
+
+      await expectLater(
+        platform.prepareCapture(
+          const PlatformCaptureRequest(
+            kind: PlatformCaptureKind.systemAudio,
+            outputFormat: PlatformPcmFormat(sampleRate: 16000, channelCount: 1),
+          ),
+        ),
+        throwsA(
+          isA<UnsupportedError>().having(
+            (UnsupportedError error) => error.message,
+            'message',
+            contains('SystemAudioSourceUnavailable'),
+          ),
+        ),
+      );
+    });
+
+    test('rejects a process set wider than the selected stream', () async {
+      await expectLater(
+        build().prepareCapture(
+          const PlatformCaptureRequest(
+            kind: PlatformCaptureKind.systemAudio,
+            outputFormat: PlatformPcmFormat(sampleRate: 16000, channelCount: 1),
+            processIds: <int>[4242, 4343],
+            inputDeviceId: 'pulse-monitor-stream:42',
+          ),
+        ),
+        throwsA(
+          isA<UnsupportedError>().having(
+            (UnsupportedError error) => error.message,
+            'message',
+            contains('UnsupportedProcessSet'),
+          ),
+        ),
+      );
     });
   });
 

@@ -21,9 +21,11 @@ environment:
 dependencies:
   audio_core: ^0.1.0
   audio_processing: ^0.2.0
-  fluidaudio_dart: ^0.4.0
+  # Host-managed model roots require the (not yet published) 0.5.0 API.
+  fluidaudio_dart: ^0.5.0
   flutter:
     sdk: flutter
+  meta: ^1.16.0
   speech_core: ^0.2.0
 
 dev_dependencies:

@@ -23,14 +23,15 @@
 # abseil) so the result is self-contained and relocatable.
 #
 # STATUS: the macOS (arm64) path is exercised. The Linux path is carried over
-# from the original unchanged and is UNTESTED here. Windows is not covered at
-# all — the original builds it separately with MSVC.
+# from the original and is UNTESTED on this host. Windows uses the separate
+# build_native_windows.sh MSVC recipe and is verified only by its target CI job.
 #
 # Requirements: git, meson, ninja, pkg-config, a C++ compiler (c++).
 #
 # Usage:
 #   packages/audio_aec/tool/build_native.sh [DEST_DIR]
 #   WAP_REF=<sha> packages/audio_aec/tool/build_native.sh
+#   MACOSX_DEPLOYMENT_TARGET=13.0 packages/audio_aec/tool/build_native.sh
 #
 # DEST_DIR defaults to <package>/.native. Point the loader at the result with:
 #   export AUDIO_AEC_LIBRARY="$(pwd)/packages/audio_aec/.native/libaec_ffi.dylib"
@@ -40,8 +41,11 @@ PKG_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 SHIM="$PKG_ROOT/native/aec_ffi.cc"
 DEST="${1:-$PKG_ROOT/.native}"
 
-WAP_REPO="${WAP_REPO:-https://gitlab.freedesktop.org/pulseaudio/webrtc-audio-processing.git}"
-WAP_REF="${WAP_REF:-d0569cfa50c1858ee279d77b3fc8870be6902441}" # v2.1
+# Resolved from this script's absolute package root.
+# shellcheck disable=SC1091
+source "$PKG_ROOT/tool/native_release.env"
+WAP_REPO="${WAP_REPO:-$AUDIO_AEC_WAP_REPO}"
+WAP_REF="${WAP_REF:-$AUDIO_AEC_WAP_REF}"
 
 log()  { printf '==> %s\n' "$*"; }
 warn() { printf '!! %s\n' "$*" >&2; }
@@ -65,7 +69,16 @@ git_clone_pinned() { # repo ref dest
 }
 
 case "$(uname -s)" in
-  Darwin) NATIVE_OS=Darwin; NATIVE_EXT=dylib ;;
+  Darwin)
+    NATIVE_OS=Darwin
+    NATIVE_EXT=dylib
+    # New Xcode SDKs otherwise stamp the host SDK version into the dylib (for
+    # example macOS 26), making a locally built code asset unloadable on the
+    # app's supported macOS 12/13 machines. Consumers may raise this baseline,
+    # but the package default must match its declared deployment contract.
+    MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-12.0}"
+    export MACOSX_DEPLOYMENT_TARGET
+    ;;
   Linux)  NATIVE_OS=Linux;  NATIVE_EXT=so ;;
   *)
     warn "build_native.sh: unsupported platform $(uname -s). Build the library with an MSVC toolchain and point AUDIO_AEC_LIBRARY at it."
@@ -87,6 +100,12 @@ trap 'rm -rf "$WORK"' EXIT
 log "Cloning $WAP_REPO @ $WAP_REF"
 git_clone_pinned "$WAP_REPO" "$WAP_REF" "$WORK/wap"
 SRC="$WORK/wap"
+
+# Make archive metadata and compiler path records stable across checkout paths.
+# The pinned source commit supplies a stable epoch unless a release builder
+# deliberately overrides it.
+SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$SRC" show -s --format=%ct HEAD)}"
+export SOURCE_DATE_EPOCH ZERO_AR_DATE=1
 
 log "Configuring webrtc-audio-processing (static lib, AEC3, bundled static abseil)"
 ( cd "$SRC" && meson setup build \
@@ -116,6 +135,8 @@ fi
 log "Compiling shim ($SHIM) for $NATIVE_OS"
 "$CXX" -std=c++17 -O2 -fPIC \
   -DWEBRTC_POSIX "$OS_DEFINE" -DWEBRTC_APM_DEBUG_DUMP=0 \
+  -ffile-prefix-map="$WORK"=/usr/src/audio_aec \
+  -fdebug-prefix-map="$WORK"=/usr/src/audio_aec \
   -Wno-nullability-completeness \
   -I "$SRC/webrtc" -I "$ABSEIL_INC" \
   -c "$SHIM" -o "$WORK/aec_ffi.o"
@@ -149,7 +170,7 @@ else
   "$CXX" -shared -o "$WORK/$LIB" "$WORK/aec_ffi.o" \
     -Wl,--whole-archive "$MAIN_AR" -Wl,--no-whole-archive \
     "${OTHER_ARCHIVES[@]}" \
-    -Wl,-soname,"$LIB" \
+    -Wl,-soname,"$LIB" -Wl,--build-id=sha256 \
     -lpthread -lm
 fi
 
@@ -157,6 +178,9 @@ fi
 # runtime deps (the library must be self-contained).
 if [ "$NATIVE_OS" = "Darwin" ]; then
   nm -gU "$WORK/$LIB" | grep -q "_aec_create" || die "built $LIB is missing the aec_create symbol"
+  BUILD_METADATA="$(xcrun vtool -show-build "$WORK/$LIB")"
+  printf '%s\n' "$BUILD_METADATA" | grep -Eq 'minos[[:space:]]+12\.0([[:space:]]|$)' ||
+    die "built $LIB does not declare the required macOS 12.0 minimum deployment target"
   if otool -L "$WORK/$LIB" | grep -qi "Cellar/abseil\|/abseil"; then
     warn "WARNING: $LIB links a non-bundled abseil — not self-contained:"
     otool -L "$WORK/$LIB" | grep -i abseil >&2 || true

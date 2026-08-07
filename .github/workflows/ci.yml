@@ -185,6 +185,16 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Verify sherpa-onnx macOS deployment targets
+        run: ./tool/sherpa_macos/verify.sh
+      # speech_fluidaudio's host-managed model roots compile against the
+      # unreleased fluidaudio_dart 0.5.0 surface; pubspec_overrides.yaml
+      # resolves it from a sibling checkout. Clone it on CI until 0.5.0 is on
+      # pub.dev, then delete this step together with the overrides file.
+      - name: Clone the unpublished fluidaudio engine
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/kshdotdev/fluidaudio-dart ../fluidaudio-dart
       - uses: flutter-actions/setup-flutter@18c66a64fb6f6d3338c63cabbc5cd6da395e7f1d
         with:
           version: 3.44.0

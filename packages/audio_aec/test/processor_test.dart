@@ -30,9 +30,9 @@ void main() {
       );
     });
 
-    test('rejects a rate whose 10 ms block is not a whole sample count', () {
+    test('rejects a rate WebRTC AudioProcessing does not support', () {
       expect(
-        () => AecProcessor.fromBindings(FakeAecBindings(), sampleRate: 16050),
+        () => AecProcessor.fromBindings(FakeAecBindings(), sampleRate: 44100),
         throwsA(isA<ArgumentError>()),
       );
     });

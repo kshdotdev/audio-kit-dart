@@ -16,6 +16,12 @@ void main() {
         isEmpty,
       );
       expect(await AudioFlutterPlatform.instance.listAudioProcesses(), isEmpty);
+      final PlatformCaptureBackendInfo backend = await AudioFlutterPlatform
+          .instance
+          .captureBackendInfo();
+      expect(backend.backendId, 'audio_flutter.unsupported');
+      expect(backend.sourceKinds, isEmpty);
+      expect(await AudioFlutterPlatform.instance.listCaptureSources(), isEmpty);
       expect(
         () => AudioFlutterPlatform.instance.prepareCapture(
           const PlatformCaptureRequest(

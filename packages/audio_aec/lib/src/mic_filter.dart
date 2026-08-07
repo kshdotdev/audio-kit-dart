@@ -258,6 +258,9 @@ final class AecMicFilter implements AudioSource {
     } on Object {
       await farSession?.close();
       await nearSession.close();
+      // A failed prepare consumes this one-shot filter. Release the native
+      // processor here as no session exists whose close path could own it.
+      processor?.dispose();
       rethrow;
     }
 

@@ -3,6 +3,107 @@ import 'dart:typed_data';
 /// Physical source selected for a capture session.
 enum PlatformCaptureKind { microphone, systemAudio }
 
+/// Normalized source category reported by a federated capture backend.
+enum PlatformCaptureSourceKind {
+  microphone,
+  application,
+  browser,
+  systemMix,
+  pulseMonitor,
+  pipeWireMonitor,
+}
+
+/// Whether a normalized source can currently be opened.
+enum PlatformCaptureSourceAvailability {
+  available,
+  permissionRequired,
+  unavailable,
+}
+
+/// Independently probeable behavior exposed by a platform capture adapter.
+enum PlatformCaptureCapability {
+  processFiltering,
+  applicationFiltering,
+  browserGrouping,
+  systemMix,
+  pauseResume,
+  sourceChangeEvents,
+  nativeMonotonicClock,
+  independentTracks,
+}
+
+/// How native frame timestamps map onto a monotonic session timeline.
+enum PlatformCaptureTimingQuality { nativeMapped, synchronized, synthesized }
+
+/// Stable facts about the active federated capture implementation.
+final class PlatformCaptureBackendInfo {
+  const PlatformCaptureBackendInfo({
+    required this.backendId,
+    required this.displayName,
+    required this.platform,
+    required this.sourceKinds,
+    this.capabilities = const <PlatformCaptureCapability>{},
+  });
+
+  final String backendId;
+  final String displayName;
+  final String platform;
+  final Set<PlatformCaptureSourceKind> sourceKinds;
+  final Set<PlatformCaptureCapability> capabilities;
+}
+
+/// One normalized source plus the exact native request needed to open it.
+///
+/// Unavailable entries are intentional: they let callers distinguish a native
+/// feature the platform does not implement from an empty, transient device
+/// list. [availabilityCode] is stable for programmatic handling while
+/// [availabilityReason] is suitable for diagnostics and UI.
+final class PlatformCaptureSourceInfo {
+  const PlatformCaptureSourceInfo({
+    required this.sourceId,
+    required this.kind,
+    required this.displayName,
+    required this.availability,
+    required this.captureKind,
+    required this.timingQuality,
+    this.capabilities = const <PlatformCaptureCapability>{},
+    this.supportedSampleRates = const <int>[],
+    this.supportedChannelCounts = const <int>[],
+    this.minimumSampleRate,
+    this.maximumSampleRate,
+    this.minimumChannelCount,
+    this.maximumChannelCount,
+    this.processIds = const <int>[],
+    this.isDefault = false,
+    this.nativeSourceId,
+    this.applicationId,
+    this.inputDeviceId,
+    this.availabilityCode,
+    this.availabilityReason,
+  });
+
+  final String sourceId;
+  final PlatformCaptureSourceKind kind;
+  final String displayName;
+  final PlatformCaptureSourceAvailability availability;
+  final PlatformCaptureKind captureKind;
+  final PlatformCaptureTimingQuality timingQuality;
+  final Set<PlatformCaptureCapability> capabilities;
+  final List<int> supportedSampleRates;
+  final List<int> supportedChannelCounts;
+  final int? minimumSampleRate;
+  final int? maximumSampleRate;
+  final int? minimumChannelCount;
+  final int? maximumChannelCount;
+  final List<int> processIds;
+  final bool isDefault;
+  final String? nativeSourceId;
+  final String? applicationId;
+  final String? inputDeviceId;
+  final String? availabilityCode;
+  final String? availabilityReason;
+}
+
 /// Overflow action for the bounded native capture mailbox.
 enum PlatformCaptureOverflowPolicy { dropOldest, dropNewest, failCapture }
 
@@ -95,6 +196,7 @@ final class PlatformCaptureSessionInfo {
     required this.trackId,
     required this.clockId,
     required this.format,
+    this.timingQuality = PlatformCaptureTimingQuality.synthesized,
   });
 
   final int sessionId;
@@ -102,6 +204,9 @@ final class PlatformCaptureSessionInfo {
   final String trackId;
   final String clockId;
   final PlatformPcmFormat format;
+
+  /// Quality of the native timestamp-to-session-clock mapping.
+  final PlatformCaptureTimingQuality timingQuality;
 }
 
 /// One owned interleaved float32 frame returned by a platform pull.

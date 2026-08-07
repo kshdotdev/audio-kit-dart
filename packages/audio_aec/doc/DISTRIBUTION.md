@@ -1,6 +1,9 @@
 # Native distribution for `audio_aec` (risk R4)
 
-**Status: resolved — build hooks, with prebuilt binaries fetched and hash-pinned.**
+**Status: distribution design resolved; no prebuilt hashes are pinned yet.**
+The selected design is build hooks with separately released, SHA-256-pinned
+prebuilts. An empty `pinnedSha256` map still means this checkout advertises no
+downloadable runtime.
 Prototyped and measured on 2026-07-29. Everything below marked "verified" was run
 on this machine; everything marked "open" was not, and says why.
 
@@ -196,19 +199,26 @@ a real Developer ID, notarize it, and confirm the framework passes
 `spctl -a -vvv`. Until that is done, this package should be considered
 verified-for-development only on macOS.
 
-## Windows and Linux — open
+## Cross-platform release automation — implemented, execution still open
 
-Neither was exercised; this machine is macOS arm64.
+Neither Linux nor Windows was exercised from this machine; it is macOS arm64.
+The repository now has an isolated, manually dispatched
+`release-audio-aec-prebuilt.yml` workflow covering macOS arm64/x64, Linux x64,
+and Windows x64. The Windows job adapts the reference MSVC recipe and every job
+must load/create/destroy the engine before upload. This is an executable test
+contract, not evidence that those jobs have passed yet.
 
 - **Linux.** `tool/build_native.sh`'s Linux path is inherited from Control
   Center and has never been run here. The header-padding problem is
   macOS-specific (ELF uses `DT_SONAME` and `RPATH`, and the loader does not
   rewrite them), so the equivalent trap is probably absent, but "probably" is
   the accurate word. Needs a CI runner.
-- **Windows.** Not covered at all — `build_native.sh` is bash and the upstream
-  project builds with MSVC separately. `from_source` refuses on Windows with a
-  clear message rather than pretending. A Windows binary has to come from the
-  prebuilt path, which means CI has to produce one.
+- **Windows.** `tool/build_native_windows.sh` now carries a pinned MSVC x64
+  recipe with static CRT selection, deterministic compiler/linker flags, six
+  explicit exports, and `dumpbin` verification. It is used only by the Windows
+  release job and remains unverified until that job runs green. The consumer
+  hook's local `from_source` mode still refuses Windows rather than assuming a
+  developer shell has MSVC configured.
 - **Apple constraint to respect when adding architectures:** the library
   filename must be identical across every target OS/arch, because Flutter's
   framework and XCFramework generation depends on it. `installedLibraryName()`
@@ -291,19 +301,25 @@ cannot accidentally prove the old path instead of the new one.
 packages/audio_aec/tool/verify_hook.sh           # download + hash, both outcomes
 ```
 
-## Migration steps
+## Release steps and current state
 
-1. **CI produces binaries.** Add jobs for macos-arm64, macos-x64, linux-x64 and
-   windows-x64. macOS must link with `-headerpad_max_install_names` (already in
-   `build_native.sh`); Windows needs an MSVC recipe that does not exist yet.
-2. **Release them** under a tag matching `artifactVersion` in
-   `hook/prebuilt_manifest.dart`, named `aec_ffi-<os>-<arch>.<ext>`.
-3. **Pin the hashes** into `pinnedSha256`. This is the only edit needed to turn
-   the default path on, and it is what makes `defaultUrlBase` reachable.
-4. **Ship the BSD-3 notice with the binary.** `NOTICE` obliges attribution in
-   binary distributions; the release assets need a third-party notices file
-   beside them, since the dylib now travels independently of the pub package.
+1. **Run the prebuilt workflow without publication.** It builds and target-
+   probes macos-arm64, macos-x64, linux-x64 and windows-x64, then generates a
+   deterministic SHA-256 manifest. The four-target bundle is retained as a CI
+   artifact for review. This automation exists but has not yet run in this
+   change.
+2. **Publish explicitly.** Re-dispatch from `main` with `publish_release: true`.
+   The workflow re-verifies every byte and publishes a new immutable
+   `audio_aec-native-v<artifactVersion>` release; it refuses an existing tag.
+3. **Pin reviewed hashes in the package.** Run
+   `python3 tool/prebuilt_release.py render-pins --manifest <manifest>
+   --directory <release-dir>` and commit the resulting `pinnedSha256` map. An
+   empty map is intentional until this step and means the package claims no
+   downloadable runtime.
+4. **The workflow ships and hashes the BSD-3 notice with the binaries.**
+   `NOTICE` obliges attribution in binary distributions; the aggregate job
+   copies it as `audio_aec-NOTICE.txt` and includes its SHA-256 in the manifest.
 5. **Verify notarization** on a release Flutter app with a real Developer ID
    before declaring macOS production-ready.
-6. **Document `dart compile exe`** in the README — consumers must use
+6. **`dart compile exe` is documented in the README.** Consumers must use
    `dart build cli`.

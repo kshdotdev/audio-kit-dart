@@ -166,3 +166,38 @@ const String kPactlSourcesShort = '''
 2\talsa_output.usb-Focusrite.analog-stereo.monitor\tPipeWire\ts16le 2ch 48000Hz\tIDLE
 3\tbluez_input.AC_12_2F.headset\tPipeWire\ts16le 1ch 16000Hz\tRUNNING
 ''';
+
+/// Canned addressable render streams from a PipeWire Pulse-compatible server.
+const String kPactlSinkInputsJson = r'''
+[
+  {
+    "index": 42,
+    "sink": 51,
+    "corked": false,
+    "properties": {
+      "application.name": "Google Chrome",
+      "application.process.binary": "chrome",
+      "application.process.id": "4242",
+      "media.name": "Playback"
+    }
+  },
+  {
+    "index": 43,
+    "sink": 51,
+    "corked": true,
+    "properties": {
+      "application.name": "Zoom",
+      "application.process.binary": "zoom",
+      "application.process.id": "4343"
+    }
+  },
+  {
+    "index": 44,
+    "sink": 51,
+    "corked": false,
+    "properties": {
+      "application.name": "Remote stream without a local PID"
+    }
+  }
+]
+''';

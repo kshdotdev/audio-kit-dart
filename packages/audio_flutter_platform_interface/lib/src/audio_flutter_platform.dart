@@ -90,6 +90,23 @@ abstract class AudioFlutterPlatform extends PlatformInterface {
     'cleanupOrphanedCaptureDevices() is not implemented on this platform',
   );
 
+  /// Describes the normalized capture adapter implemented by this platform.
+  ///
+  /// The default preserves source compatibility with platform packages built
+  /// before normalized discovery existed and reports no capture support.
+  Future<PlatformCaptureBackendInfo> captureBackendInfo() async =>
+      const PlatformCaptureBackendInfo(
+        backendId: 'audio_flutter.unsupported',
+        displayName: 'Unsupported Flutter capture backend',
+        platform: 'unsupported',
+        sourceKinds: <PlatformCaptureSourceKind>{},
+      );
+
+  /// Lists capability-checked normalized sources, including explicit
+  /// unavailable descriptors for known-but-unimplemented native features.
+  Future<List<PlatformCaptureSourceInfo>> listCaptureSources() async =>
+      const <PlatformCaptureSourceInfo>[];
+
   Future<List<PlatformAudioInputDevice>> listAudioInputDevices();
 
   Future<List<PlatformAudioProcess>> listAudioProcesses();

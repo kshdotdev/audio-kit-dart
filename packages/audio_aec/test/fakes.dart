@@ -26,6 +26,7 @@ final class FakeAecBindings implements AecBindings {
   FakeAecBindings({
     this.createReturnsNull = false,
     this.versionString = 'fake-aec+subtraction',
+    this.versionError,
     this.erl,
     this.erle,
     this.residual,
@@ -37,6 +38,9 @@ final class FakeAecBindings implements AecBindings {
 
   /// Value [version] returns.
   final String? versionString;
+
+  /// Error thrown by [version], when the version symbol fails during probing.
+  final Object? versionError;
 
   /// Metric values written by [getMetrics]; `null` writes the sentinel.
   double? erl;
@@ -150,6 +154,10 @@ final class FakeAecBindings implements AecBindings {
   @override
   String? version() {
     calls.add('version');
+    final Object? error = versionError;
+    if (error != null) {
+      throw error;
+    }
     return versionString;
   }
 }

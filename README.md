@@ -14,17 +14,22 @@ from this workspace so applications can compose only the layers they need.
 |---|---|
 | `audio_core` | Owned float32 PCM frames, immutable formats and timelines, cancellation, failures, and two-phase source/sink sessions |
 | `audio_kit_graph` | `AudioHub`, dynamic N-way fan-out, independently bounded route mailboxes, overflow policies, isolation, metrics, drain, and abort |
-| `audio_processing` | Stateful resampling, downmixing, rechunking, metering, explicit synchronization/mixing, in-memory WAV, and an opt-in file WAV sink |
+| `audio_processing` | Stateful resampling, downmixing, rechunking, metering, explicit synchronization/mixing, in-memory WAV, segmented WAV recording with crash recovery, and opt-in `dart:io` WAV sources/sinks |
+| `audio_aec` | Acoustic echo cancellation for `audio_core` streams over WebRTC AEC3 (FFI) |
 | `speech_core` | Stable provider registry, typed descriptors/options, and streaming or batch STT, TTS, VAD, EOU, and diarization contracts |
 | `audio_flutter_platform_interface` | Federated capture/playback and device-process platform messages |
 | `audio_flutter` | Provider-neutral Flutter microphone/system capture, device discovery, permissions, health, and PCM playback |
 | `audio_flutter_darwin` | Apple implementation with a bounded native capture pipeline, macOS process taps, playback, health, and source-native recording |
+| `audio_flutter_linux` | Linux implementation of capture and PCM playback over PulseAudio and PipeWire |
+| `audio_flutter_windows` | Windows capture with WASAPI process/system loopback, microphones, and render playback |
 | `voice_core` | Cancellable half-duplex conversation and turn orchestration, bounded serialized synthesis, stale-generation rejection, sentence segmentation, and barge-in |
 | `voice_flutter` | Graph-backed STT/VAD input and synthesized-audio output bridges, plus optional widgets driven by `voice_core` |
 | `speech_fluidaudio` | FluidAudio streaming/batch STT, VAD, EOU, batch diarization, and TTS adapter |
 | `speech_mlx` | MLX batch STT and incremental TTS over bounded, long-lived worker isolates |
+| `speech_sherpa` | Cross-platform sherpa-onnx adapter — streaming and batch STT, VAD, diarization, and speaker embeddings |
 | `speech_deepgram` | Deepgram streaming STT with renewable credentials and bounded websocket writes |
 | `speech_openai_tts` | OpenAI streaming TTS exposed as a cancellable audio source |
+| `sherpa_onnx_macos` | Private macOS 12-compatible native binary override for `sherpa_onnx` (never published) |
 
 The portable core is pure Dart. Flutter, platform-channel, native model,
 network, and provider SDK dependencies remain in integration packages.

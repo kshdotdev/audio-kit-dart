@@ -52,6 +52,14 @@ extern "C" {
 // suppression off so the user's own voice stays natural for the recognizer.
 // Returns an opaque handle, or null on failure.
 void* aec_create(int sample_rate_hz, int num_channels) {
+  // Keep malformed FFI callers away from WebRTC's assertion-heavy format
+  // constructors. Dart validates the same contract, but the C ABI is public
+  // and release probing deliberately treats a null handle as a safe failure.
+  if (num_channels != 1 ||
+      (sample_rate_hz != 8000 && sample_rate_hz != 16000 &&
+       sample_rate_hz != 32000 && sample_rate_hz != 48000)) {
+    return nullptr;
+  }
   webrtc::AudioProcessing::Config config;
   config.echo_canceller.enabled = true;
   config.echo_canceller.mobile_mode = false;  // full AEC3

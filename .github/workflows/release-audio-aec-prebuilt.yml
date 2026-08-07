@@ -1,0 +1,193 @@
+name: Build audio_aec prebuilt release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: >-
+          Publish the verified bundle as audio_aec-native-v<artifactVersion>.
+          False only uploads a workflow artifact for review.
+        type: boolean
+        default: false
+
+concurrency:
+  group: audio-aec-prebuilt-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos-arm64
+            runner: macos-15
+            python: python3
+            builder: posix
+          - target: macos-x64
+            runner: macos-15-intel
+            python: python3
+            builder: posix
+          - target: linux-x64
+            runner: ubuntu-22.04
+            python: python3
+            builder: posix
+          - target: windows-x64
+            runner: windows-2022
+            python: python
+            builder: windows
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Verify release metadata and runner architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          '${{ matrix.python }}' packages/audio_aec/tool/prebuilt_release.py contract
+          '${{ matrix.python }}' packages/audio_aec/tool/prebuilt_release.py host \
+            --target '${{ matrix.target }}'
+
+      - name: Install macOS build prerequisites
+        if: runner.os == 'macOS'
+        run: brew install meson ninja pkg-config
+
+      - name: Install Linux build prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes \
+            build-essential git meson ninja-build pkg-config
+
+      - name: Set up x64 MSVC developer environment
+        if: matrix.builder == 'windows'
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: x64
+
+      - name: Install Windows build prerequisites
+        if: matrix.builder == 'windows'
+        run: python -m pip install --disable-pip-version-check meson ninja
+
+      - name: Build macOS or Linux AEC3 library
+        if: matrix.builder == 'posix'
+        shell: bash
+        run: >-
+          packages/audio_aec/tool/build_native.sh
+          '${{ runner.temp }}/audio-aec-native'
+
+      - name: Build Windows AEC3 library
+        if: matrix.builder == 'windows'
+        shell: bash
+        run: >-
+          packages/audio_aec/tool/build_native_windows.sh
+          '${{ runner.temp }}/audio-aec-native'
+
+      - name: Probe engine creation and stage exact release bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          case '${{ matrix.target }}' in
+            macos-*) library='${{ runner.temp }}/audio-aec-native/libaec_ffi.dylib' ;;
+            linux-*) library='${{ runner.temp }}/audio-aec-native/libaec_ffi.so' ;;
+            windows-*) library='${{ runner.temp }}/audio-aec-native/aec_ffi.dll' ;;
+            *) echo 'unsupported target' >&2; exit 1 ;;
+          esac
+          '${{ matrix.python }}' packages/audio_aec/tool/prebuilt_release.py stage \
+            --target '${{ matrix.target }}' \
+            --library "$library" \
+            --output '${{ runner.temp }}/audio-aec-stage'
+
+      - name: Upload target bytes and probe attestation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: audio-aec-prebuilt-${{ matrix.target }}
+          path: ${{ runner.temp }}/audio-aec-stage/*
+          if-no-files-found: error
+          retention-days: 14
+
+  bundle:
+    name: Generate and verify SHA-256 manifest
+    needs: build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: audio-aec-prebuilt-*
+          path: ${{ runner.temp }}/audio-aec-release
+          merge-multiple: true
+
+      - name: Test the packaging contract
+        run: python3 -m unittest packages/audio_aec/tool/test_prebuilt_release.py
+
+      - name: Generate manifest from all four exact binaries
+        run: |
+          set -euo pipefail
+          python3 packages/audio_aec/tool/prebuilt_release.py assemble \
+            --directory '${{ runner.temp }}/audio-aec-release'
+          python3 packages/audio_aec/tool/prebuilt_release.py verify \
+            --manifest '${{ runner.temp }}/audio-aec-release/audio_aec-prebuilt-manifest.json' \
+            --directory '${{ runner.temp }}/audio-aec-release'
+          python3 packages/audio_aec/tool/prebuilt_release.py render-pins \
+            --manifest '${{ runner.temp }}/audio-aec-release/audio_aec-prebuilt-manifest.json' \
+            --directory '${{ runner.temp }}/audio-aec-release' \
+            > '${{ runner.temp }}/audio-aec-release/reviewed-pinned-sha256.dart'
+
+      - name: Upload complete reviewed release bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: audio-aec-prebuilt-release
+          path: |
+            ${{ runner.temp }}/audio-aec-release/aec_ffi-*
+            ${{ runner.temp }}/audio-aec-release/audio_aec-prebuilt-manifest.json
+            ${{ runner.temp }}/audio-aec-release/audio_aec-NOTICE.txt
+            ${{ runner.temp }}/audio-aec-release/reviewed-pinned-sha256.dart
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish immutable native release
+    if: inputs.publish_release && github.ref == 'refs/heads/main'
+    needs: bundle
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: audio-aec-prebuilt-release
+          path: ${{ runner.temp }}/audio-aec-release
+
+      - name: Reverify and publish without overwriting an existing tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_dir='${{ runner.temp }}/audio-aec-release'
+          manifest="$release_dir/audio_aec-prebuilt-manifest.json"
+          python3 packages/audio_aec/tool/prebuilt_release.py verify \
+            --manifest "$manifest" --directory "$release_dir"
+          version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["artifactVersion"])' "$manifest")"
+          tag="audio_aec-native-v$version"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing native release tag $tag." >&2
+            exit 1
+          fi
+          gh release create "$tag" \
+            "$release_dir"/aec_ffi-* \
+            "$manifest" \
+            "$release_dir/audio_aec-NOTICE.txt" \
+            --target "$GITHUB_SHA" \
+            --title "audio_aec native runtime $version" \
+            --notes "Four target-specific WebRTC AEC3 runtimes, each load/create/destroy probed on its target runner. Verify bytes with audio_aec-prebuilt-manifest.json before pinning them in the Dart package."

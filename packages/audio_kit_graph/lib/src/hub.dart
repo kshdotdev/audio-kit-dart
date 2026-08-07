@@ -51,6 +51,7 @@ final class AudioHub {
   Future<void>? _sourceFinishFuture;
   Future<void>? _stopFuture;
   Future<void>? _abortFuture;
+  Future<void>? _failFuture;
   Future<void>? _closeFuture;
 
   /// Current hub lifecycle.
@@ -283,6 +284,12 @@ final class AudioHub {
       _stopFuture ??= _stop(cancellationToken);
 
   Future<void> _stop(AudioCancellationToken? cancellationToken) async {
+    // A failure teardown in flight owns the graph; wait for it so stop()
+    // observes the settled terminal state instead of racing the drain.
+    final Future<void>? failing = _failFuture;
+    if (failing != null) {
+      await failing;
+    }
     if (_state == AudioSessionState.finished) {
       return;
     }
@@ -313,6 +320,15 @@ final class AudioHub {
       rethrow;
     } catch (error, stackTrace) {
       final AudioFailure failure = _asHubFailure(error);
+      // Frames the router already accepted are valid audio: a source that
+      // fails to stop must not cost a lossless sink its queued tail. Drain
+      // what can still drain before the hub fails; the abort inside _fail is
+      // then a no-op for every route that finished.
+      try {
+        await router.finish();
+      } on Object {
+        // A route that cannot finish is aborted by _fail below.
+      }
       await _fail(failure, stackTrace);
       throw failure;
     }
@@ -371,18 +387,49 @@ final class AudioHub {
     }
   }
 
-  Future<void> _fail(Object error, StackTrace stackTrace) async {
+  Future<void> _fail(Object error, StackTrace stackTrace) =>
+      _failFuture ??= _failOnce(error, stackTrace);
+
+  Future<void> _failOnce(Object error, StackTrace stackTrace) async {
     if (_state == AudioSessionState.failed ||
         _state == AudioSessionState.aborted ||
         _state == AudioSessionState.closed) {
       return;
     }
     final AudioFailure failure = _asHubFailure(error);
+    // A dead source does not invalidate the frames its routes already
+    // accepted. Deliver them, then abort the routes WITH the failure: a
+    // lossless consumer keeps every admitted frame, and its sink still
+    // learns the stream ended abnormally — finish stays reserved for genuine
+    // completion. A route that already finished or failed is left as it is.
+    // The hub reports `failed` only once this teardown has completed, so an
+    // observer that sees the terminal state can trust the sinks are settled.
     try {
-      await abort(failure: failure);
+      await router.drainThenAbort(failure: failure);
     } on Object {
-      // Preserve the stable source failure. close() retries every independent
-      // resource cleanup path and can surface a cleanup-specific error.
+      // close() retries every independent resource cleanup path and can
+      // surface a cleanup-specific error; the stable source failure wins.
+    }
+    try {
+      await source.abort(failure: failure);
+    } on Object {
+      // Preserve the stable source failure.
+    }
+    try {
+      await _framesSubscription?.cancel();
+    } on Object {
+      // Preserve the stable source failure.
+    }
+    _framesSubscription = null;
+    try {
+      await _statusSubscription?.cancel();
+    } on Object {
+      // Preserve the stable source failure.
+    }
+    _statusSubscription = null;
+    if (_state != AudioSessionState.aborted &&
+        _state != AudioSessionState.closed) {
+      _state = AudioSessionState.failed;
     }
   }
 
@@ -400,6 +447,11 @@ final class AudioHub {
   Future<void> close() => _closeFuture ??= _close();
 
   Future<void> _close() async {
+    final Future<void>? failing = _failFuture;
+    if (failing != null) {
+      // Let an in-flight failure teardown settle its sinks first.
+      await failing;
+    }
     Object? firstError;
     StackTrace? firstStackTrace;
     if (_state == AudioSessionState.active ||
@@ -453,7 +505,8 @@ final class AudioHub {
   }
 
   void _ensureAttachable() {
-    if (_state == AudioSessionState.finishing ||
+    if (_failFuture != null ||
+        _state == AudioSessionState.finishing ||
         _state == AudioSessionState.finished ||
         _state == AudioSessionState.aborted ||
         _state == AudioSessionState.failed ||

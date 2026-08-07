@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import os
 
 #if os(iOS)
   import Flutter
@@ -11,6 +12,26 @@ enum MonotonicClock {
   static func microseconds(hostTime: UInt64? = nil) -> Int64 {
     let ticks = hostTime ?? mach_continuous_time()
     return Int64((AVAudioTime.seconds(forHostTime: ticks) * 1_000_000).rounded())
+  }
+}
+
+/// Heap-backed unfair lock with the stateful `withLock` API used by the audio
+/// callbacks. `OSAllocatedUnfairLock` only exists on macOS 13; the underlying
+/// unfair-lock primitive is available on macOS 12 and keeps the callback path
+/// allocation-free after initialization.
+final class CompatibleUnfairLock<State>: @unchecked Sendable {
+  private var primitive = os_unfair_lock_s()
+  private var state: State
+
+  init(initialState: State) {
+    state = initialState
+  }
+
+  @inline(__always)
+  func withLock<Result>(_ body: (inout State) throws -> Result) rethrows -> Result {
+    os_unfair_lock_lock(&primitive)
+    defer { os_unfair_lock_unlock(&primitive) }
+    return try body(&state)
   }
 }
 

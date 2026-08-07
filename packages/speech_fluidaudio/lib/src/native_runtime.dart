@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:fluidaudio_dart/fluidaudio_dart.dart' as native;
+import 'package:meta/meta.dart';
 
 import 'drivers.dart';
 import 'options.dart';
@@ -9,17 +10,100 @@ import 'options.dart';
 /// Production runtime backed by the `fluidaudio_dart` Flutter plugin.
 ///
 /// SDK values are translated at this boundary and never enter `speech_core`.
+///
+/// [modelsRootPath] points FluidAudio's ASR/VAD/diarizer/EOU/CTC model
+/// resolution at a host-managed directory
+/// (`<modelsRootPath>/<repoFolderName>/<files>`); [ttsRootPath] does the same
+/// for TTS assets. [offline] forbids network fetches, so a missing pinned
+/// artifact fails loudly instead of being re-downloaded into the host's
+/// directory — always pair it with a host-managed root. The configuration is
+/// applied exactly once, before the first driver is created; the native side
+/// rejects a root change after any model instance exists.
 final class FluidNativeRuntime implements FluidAudioRuntime {
+  /// Creates a runtime, optionally rooted at host-managed model directories.
+  FluidNativeRuntime({
+    this._modelsRootPath,
+    this._ttsRootPath,
+    this._offline = false,
+    @visibleForTesting this._models,
+  });
+
+  final String? _modelsRootPath;
+  final String? _ttsRootPath;
+  final bool _offline;
+  final native.FluidModels? _models;
+  Future<void>? _configureFuture;
   final Set<_NativeDriver> _drivers = <_NativeDriver>{};
   Future<void>? _closeFuture;
 
   bool get _isClosed => _closeFuture != null;
+
+  /// Applies the host-managed roots and offline mode now instead of lazily at
+  /// the first driver, so a root conflict surfaces where the host can explain
+  /// it. Idempotent; throws `FluidAudioException` with code `ModelRootsLocked`
+  /// when a different root is already latched in this process.
+  Future<void> ensureConfigured() => _ensureConfigured();
+
+  Future<void> _ensureConfigured() {
+    if (_modelsRootPath == null && _ttsRootPath == null && !_offline) {
+      return Future<void>.value();
+    }
+    return _configureFuture ??= _configure();
+  }
+
+  Future<void> _configure() async {
+    final models = _models ?? native.FluidModels();
+    if (_modelsRootPath != null || _ttsRootPath != null) {
+      try {
+        await models.setModelRoots(
+          native.FluidModelRoots(
+            modelsRoot: _modelsRootPath,
+            ttsRoot: _ttsRootPath,
+          ),
+        );
+      } on native.FluidAudioException catch (error) {
+        // The native roots are a process-wide latch: once any model instance
+        // exists they refuse to change. A new runtime asking for the roots
+        // that are already in effect is the normal recreate-after-dispose
+        // path and must succeed; only a genuinely different root is an error.
+        if (error.code != 'ModelRootsLocked') {
+          rethrow;
+        }
+        final current = await models.modelRoots();
+        final sameModels =
+            _modelsRootPath == null ||
+            _normalizePath(current.modelsRoot) ==
+                _normalizePath(_modelsRootPath);
+        final sameTts =
+            _ttsRootPath == null ||
+            _normalizePath(current.ttsRoot) == _normalizePath(_ttsRootPath);
+        if (!sameModels || !sameTts) {
+          rethrow;
+        }
+      }
+    }
+    if (_offline) {
+      await models.setOfflineMode(true);
+    }
+  }
+
+  static String? _normalizePath(String? path) {
+    if (path == null) {
+      return null;
+    }
+    var value = path;
+    while (value.length > 1 && value.endsWith('/')) {
+      value = value.substring(0, value.length - 1);
+    }
+    return value;
+  }
 
   @override
   Future<FluidBatchAsrDriver> createBatchAsr(
     FluidRecognitionModel model,
   ) async {
     _ensureOpen();
+    await _ensureConfigured();
     final recognizer = await native.FluidAsr.load(version: _asrVersion(model));
     if (_isClosed) {
       await recognizer.dispose();
@@ -33,6 +117,7 @@ final class FluidNativeRuntime implements FluidAudioRuntime {
     FluidDiarizationDriverConfiguration configuration,
   ) async {
     _ensureOpen();
+    await _ensureConfigured();
     final diarizer = await native.FluidDiarizer.create(
       clusteringThreshold: configuration.clusteringThreshold,
       numSpeakers: configuration.exactSpeakerCount,
@@ -54,6 +139,7 @@ final class FluidNativeRuntime implements FluidAudioRuntime {
     required Duration debounce,
   }) async {
     _ensureOpen();
+    await _ensureConfigured();
     final detector = await native.FluidEou.create(
       chunkSize: switch (chunk) {
         FluidEndOfUtteranceChunk.milliseconds160 => native.EouChunkSize.ms160,
@@ -76,6 +162,7 @@ final class FluidNativeRuntime implements FluidAudioRuntime {
     FluidStreamingAsrDriverConfiguration configuration,
   ) async {
     _ensureOpen();
+    await _ensureConfigured();
     native.FluidStreamingAsr? recognizer;
     native.FluidCtcVocabulary? vocabulary;
     try {
@@ -125,6 +212,7 @@ final class FluidNativeRuntime implements FluidAudioRuntime {
     FluidTtsDriverConfiguration configuration,
   ) async {
     _ensureOpen();
+    await _ensureConfigured();
     final _NativeTtsDriver driver;
     switch (configuration.engine) {
       case FluidSynthesisEngine.pocket:
@@ -157,6 +245,7 @@ final class FluidNativeRuntime implements FluidAudioRuntime {
   @override
   Future<FluidItnDriver> createItn() async {
     _ensureOpen();
+    await _ensureConfigured();
     final normalizer = native.FluidItn();
     if (!await normalizer.isNativeAvailable()) {
       throw StateError(
@@ -175,6 +264,7 @@ final class FluidNativeRuntime implements FluidAudioRuntime {
     required Duration minimumSilence,
   }) async {
     _ensureOpen();
+    await _ensureConfigured();
     native.FluidVad? detector;
     native.FluidVadStream? stream;
     try {

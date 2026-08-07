@@ -49,6 +49,14 @@ void main() {
       expect(asset!.version(), 'webrtc-audio-processing-2.1+aec3');
     });
 
+    test('capability probe creates and releases the packaged engine', () {
+      final AecRuntimeCapability capability = probeAecRuntime();
+
+      expect(capability.isAvailable, isTrue);
+      expect(capability.version, 'webrtc-audio-processing-2.1+aec3');
+      expect(capability.failure, isNull);
+    });
+
     test('AecProcessor.create() picks the asset up with no path and no env', () {
       final AecProcessor processor = AecProcessor.create();
       addTearDown(processor.dispose);

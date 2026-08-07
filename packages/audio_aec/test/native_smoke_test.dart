@@ -20,6 +20,16 @@ void main() {
       : null;
 
   group('native library', () {
+    test('runtime capability requires successful engine creation', () {
+      final AecRuntimeCapability capability = probeAecRuntime(
+        libraryPath: libraryPath,
+      );
+
+      expect(capability.isAvailable, isTrue);
+      expect(capability.version, 'webrtc-audio-processing-2.1+aec3');
+      expect(capability.failure, isNull);
+    });
+
     test('aec_version identifies the engine the ABI was derived from', () {
       final FfiAecBindings bindings = FfiAecBindings.open(
         libraryPath: libraryPath,

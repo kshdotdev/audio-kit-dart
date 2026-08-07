@@ -2,6 +2,7 @@
 library;
 
 export 'src/capture.dart';
+export 'src/capture_backend.dart';
 export 'src/devices.dart';
 export 'src/permissions.dart';
 export 'src/playback.dart';
