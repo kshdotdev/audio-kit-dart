@@ -10,9 +10,9 @@ import 'package:flutter/services.dart';
 import 'package:meta/meta.dart' show immutable, protected, visibleForTesting;
 
 Object? _extractReplyValueOrThrow(
-  List<Object?>? replyList,
-  String channelName, {
-  required bool isNullValid,
+    List<Object?>? replyList,
+    String channelName, {
+    required bool isNullValid,
 }) {
   if (replyList == null) {
     throw PlatformException(
@@ -46,9 +46,8 @@ bool _deepEquals(Object? a, Object? b) {
   }
   if (a is List && b is List) {
     return a.length == b.length &&
-        a.indexed.every(
-          ((int, dynamic) item) => _deepEquals(item.$2, b[item.$1]),
-        );
+        a.indexed
+            .every(((int, dynamic) item) => _deepEquals(item.$2, b[item.$1]));
   }
   if (a is Map && b is Map) {
     if (a.length != b.length) {
@@ -97,9 +96,17 @@ int _deepHash(Object? value) {
   return value.hashCode;
 }
 
-enum CaptureKindMessage { microphone, systemAudio }
 
-enum CaptureOverflowPolicyMessage { dropOldest, dropNewest, failCapture }
+enum CaptureKindMessage {
+  microphone,
+  systemAudio,
+}
+
+enum CaptureOverflowPolicyMessage {
+  dropOldest,
+  dropNewest,
+  failCapture,
+}
 
 enum AudioSessionPhaseMessage {
   prepared,
@@ -129,19 +136,24 @@ enum MicrophonePermissionStatusMessage {
 }
 
 class PcmFormatMessage {
-  PcmFormatMessage({required this.sampleRate, required this.channelCount});
+  PcmFormatMessage({
+    required this.sampleRate,
+    required this.channelCount,
+  });
 
   int sampleRate;
 
   int channelCount;
 
   List<Object?> _toList() {
-    return <Object?>[sampleRate, channelCount];
+    return <Object?>[
+      sampleRate,
+      channelCount,
+    ];
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static PcmFormatMessage decode(Object result) {
     result as List<Object?>;
@@ -160,8 +172,7 @@ class PcmFormatMessage {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(sampleRate, other.sampleRate) &&
-        _deepEquals(channelCount, other.channelCount);
+    return _deepEquals(sampleRate, other.sampleRate) && _deepEquals(channelCount, other.channelCount);
   }
 
   @override
@@ -216,8 +227,7 @@ class CaptureRequestMessage {
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static CaptureRequestMessage decode(Object result) {
     result as List<Object?>;
@@ -242,17 +252,7 @@ class CaptureRequestMessage {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(kind, other.kind) &&
-        _deepEquals(outputFormat, other.outputFormat) &&
-        _deepEquals(frameDurationMicros, other.frameDurationMicros) &&
-        _deepEquals(
-          maxBufferedDurationMicros,
-          other.maxBufferedDurationMicros,
-        ) &&
-        _deepEquals(overflowPolicy, other.overflowPolicy) &&
-        _deepEquals(processIds, other.processIds) &&
-        _deepEquals(inputDeviceId, other.inputDeviceId) &&
-        _deepEquals(rawRecordingPath, other.rawRecordingPath);
+    return _deepEquals(kind, other.kind) && _deepEquals(outputFormat, other.outputFormat) && _deepEquals(frameDurationMicros, other.frameDurationMicros) && _deepEquals(maxBufferedDurationMicros, other.maxBufferedDurationMicros) && _deepEquals(overflowPolicy, other.overflowPolicy) && _deepEquals(processIds, other.processIds) && _deepEquals(inputDeviceId, other.inputDeviceId) && _deepEquals(rawRecordingPath, other.rawRecordingPath);
   }
 
   @override
@@ -285,12 +285,17 @@ class CaptureSessionInfoMessage {
   PcmFormatMessage format;
 
   List<Object?> _toList() {
-    return <Object?>[sessionId, sourceId, trackId, clockId, format];
+    return <Object?>[
+      sessionId,
+      sourceId,
+      trackId,
+      clockId,
+      format,
+    ];
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static CaptureSessionInfoMessage decode(Object result) {
     result as List<Object?>;
@@ -306,18 +311,13 @@ class CaptureSessionInfoMessage {
   @override
   // ignore: avoid_equals_and_hash_code_on_mutable_classes
   bool operator ==(Object other) {
-    if (other is! CaptureSessionInfoMessage ||
-        other.runtimeType != runtimeType) {
+    if (other is! CaptureSessionInfoMessage || other.runtimeType != runtimeType) {
       return false;
     }
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(sessionId, other.sessionId) &&
-        _deepEquals(sourceId, other.sourceId) &&
-        _deepEquals(trackId, other.trackId) &&
-        _deepEquals(clockId, other.clockId) &&
-        _deepEquals(format, other.format);
+    return _deepEquals(sessionId, other.sessionId) && _deepEquals(sourceId, other.sourceId) && _deepEquals(trackId, other.trackId) && _deepEquals(clockId, other.clockId) && _deepEquals(format, other.format);
   }
 
   @override
@@ -370,8 +370,7 @@ class AudioFrameMessage {
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static AudioFrameMessage decode(Object result) {
     result as List<Object?>;
@@ -395,13 +394,7 @@ class AudioFrameMessage {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(sessionId, other.sessionId) &&
-        _deepEquals(sequence, other.sequence) &&
-        _deepEquals(sampleOffset, other.sampleOffset) &&
-        _deepEquals(timestampMicros, other.timestampMicros) &&
-        _deepEquals(float32Samples, other.float32Samples) &&
-        _deepEquals(droppedFramesBefore, other.droppedFramesBefore) &&
-        _deepEquals(discontinuityReason, other.discontinuityReason);
+    return _deepEquals(sessionId, other.sessionId) && _deepEquals(sequence, other.sequence) && _deepEquals(sampleOffset, other.sampleOffset) && _deepEquals(timestampMicros, other.timestampMicros) && _deepEquals(float32Samples, other.float32Samples) && _deepEquals(droppedFramesBefore, other.droppedFramesBefore) && _deepEquals(discontinuityReason, other.discontinuityReason);
   }
 
   @override
@@ -415,19 +408,24 @@ class AudioFrameMessage {
 }
 
 class AudioFrameBatchMessage {
-  AudioFrameBatchMessage({required this.frames, required this.endOfStream});
+  AudioFrameBatchMessage({
+    required this.frames,
+    required this.endOfStream,
+  });
 
   List<AudioFrameMessage> frames;
 
   bool endOfStream;
 
   List<Object?> _toList() {
-    return <Object?>[frames, endOfStream];
+    return <Object?>[
+      frames,
+      endOfStream,
+    ];
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static AudioFrameBatchMessage decode(Object result) {
     result as List<Object?>;
@@ -446,8 +444,7 @@ class AudioFrameBatchMessage {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(frames, other.frames) &&
-        _deepEquals(endOfStream, other.endOfStream);
+    return _deepEquals(frames, other.frames) && _deepEquals(endOfStream, other.endOfStream);
   }
 
   @override
@@ -520,8 +517,7 @@ class AudioSessionEventMessage {
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static AudioSessionEventMessage decode(Object result) {
     result as List<Object?>;
@@ -543,24 +539,13 @@ class AudioSessionEventMessage {
   @override
   // ignore: avoid_equals_and_hash_code_on_mutable_classes
   bool operator ==(Object other) {
-    if (other is! AudioSessionEventMessage ||
-        other.runtimeType != runtimeType) {
+    if (other is! AudioSessionEventMessage || other.runtimeType != runtimeType) {
       return false;
     }
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(sessionId, other.sessionId) &&
-        _deepEquals(phase, other.phase) &&
-        _deepEquals(code, other.code) &&
-        _deepEquals(message, other.message) &&
-        _deepEquals(receivingAudio, other.receivingAudio) &&
-        _deepEquals(callbackCount, other.callbackCount) &&
-        _deepEquals(peakAmplitude, other.peakAmplitude) &&
-        _deepEquals(rms, other.rms) &&
-        _deepEquals(nonZeroFramePercent, other.nonZeroFramePercent) &&
-        _deepEquals(renderCycles, other.renderCycles) &&
-        _deepEquals(firstAudioAtMillis, other.firstAudioAtMillis);
+    return _deepEquals(sessionId, other.sessionId) && _deepEquals(phase, other.phase) && _deepEquals(code, other.code) && _deepEquals(message, other.message) && _deepEquals(receivingAudio, other.receivingAudio) && _deepEquals(callbackCount, other.callbackCount) && _deepEquals(peakAmplitude, other.peakAmplitude) && _deepEquals(rms, other.rms) && _deepEquals(nonZeroFramePercent, other.nonZeroFramePercent) && _deepEquals(renderCycles, other.renderCycles) && _deepEquals(firstAudioAtMillis, other.firstAudioAtMillis);
   }
 
   @override
@@ -587,12 +572,15 @@ class AudioProcessMessage {
   bool isProducingAudio;
 
   List<Object?> _toList() {
-    return <Object?>[processId, bundleId, isProducingAudio];
+    return <Object?>[
+      processId,
+      bundleId,
+      isProducingAudio,
+    ];
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static AudioProcessMessage decode(Object result) {
     result as List<Object?>;
@@ -612,9 +600,7 @@ class AudioProcessMessage {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(processId, other.processId) &&
-        _deepEquals(bundleId, other.bundleId) &&
-        _deepEquals(isProducingAudio, other.isProducingAudio);
+    return _deepEquals(processId, other.processId) && _deepEquals(bundleId, other.bundleId) && _deepEquals(isProducingAudio, other.isProducingAudio);
   }
 
   @override
@@ -641,12 +627,15 @@ class AudioInputDeviceMessage {
   bool isDefault;
 
   List<Object?> _toList() {
-    return <Object?>[id, label, isDefault];
+    return <Object?>[
+      id,
+      label,
+      isDefault,
+    ];
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static AudioInputDeviceMessage decode(Object result) {
     result as List<Object?>;
@@ -666,9 +655,7 @@ class AudioInputDeviceMessage {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(id, other.id) &&
-        _deepEquals(label, other.label) &&
-        _deepEquals(isDefault, other.isDefault);
+    return _deepEquals(id, other.id) && _deepEquals(label, other.label) && _deepEquals(isDefault, other.isDefault);
   }
 
   @override
@@ -692,12 +679,14 @@ class PlaybackRequestMessage {
   int maxBufferedDurationMicros;
 
   List<Object?> _toList() {
-    return <Object?>[inputFormat, maxBufferedDurationMicros];
+    return <Object?>[
+      inputFormat,
+      maxBufferedDurationMicros,
+    ];
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static PlaybackRequestMessage decode(Object result) {
     result as List<Object?>;
@@ -716,8 +705,7 @@ class PlaybackRequestMessage {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(inputFormat, other.inputFormat) &&
-        _deepEquals(maxBufferedDurationMicros, other.maxBufferedDurationMicros);
+    return _deepEquals(inputFormat, other.inputFormat) && _deepEquals(maxBufferedDurationMicros, other.maxBufferedDurationMicros);
   }
 
   @override
@@ -744,12 +732,15 @@ class PlaybackSessionInfoMessage {
   PcmFormatMessage format;
 
   List<Object?> _toList() {
-    return <Object?>[sessionId, clockId, format];
+    return <Object?>[
+      sessionId,
+      clockId,
+      format,
+    ];
   }
 
   Object encode() {
-    return _toList();
-  }
+    return _toList();  }
 
   static PlaybackSessionInfoMessage decode(Object result) {
     result as List<Object?>;
@@ -763,16 +754,13 @@ class PlaybackSessionInfoMessage {
   @override
   // ignore: avoid_equals_and_hash_code_on_mutable_classes
   bool operator ==(Object other) {
-    if (other is! PlaybackSessionInfoMessage ||
-        other.runtimeType != runtimeType) {
+    if (other is! PlaybackSessionInfoMessage || other.runtimeType != runtimeType) {
       return false;
     }
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(sessionId, other.sessionId) &&
-        _deepEquals(clockId, other.clockId) &&
-        _deepEquals(format, other.format);
+    return _deepEquals(sessionId, other.sessionId) && _deepEquals(clockId, other.clockId) && _deepEquals(format, other.format);
   }
 
   @override
@@ -785,6 +773,7 @@ class PlaybackSessionInfoMessage {
   }
 }
 
+
 class _PigeonCodec extends StandardMessageCodec {
   const _PigeonCodec();
   @override
@@ -792,49 +781,49 @@ class _PigeonCodec extends StandardMessageCodec {
     if (value is int) {
       buffer.putUint8(4);
       buffer.putInt64(value);
-    } else if (value is CaptureKindMessage) {
+    }    else if (value is CaptureKindMessage) {
       buffer.putUint8(129);
       writeValue(buffer, value.index);
-    } else if (value is CaptureOverflowPolicyMessage) {
+    }    else if (value is CaptureOverflowPolicyMessage) {
       buffer.putUint8(130);
       writeValue(buffer, value.index);
-    } else if (value is AudioSessionPhaseMessage) {
+    }    else if (value is AudioSessionPhaseMessage) {
       buffer.putUint8(131);
       writeValue(buffer, value.index);
-    } else if (value is DiscontinuityReasonMessage) {
+    }    else if (value is DiscontinuityReasonMessage) {
       buffer.putUint8(132);
       writeValue(buffer, value.index);
-    } else if (value is MicrophonePermissionStatusMessage) {
+    }    else if (value is MicrophonePermissionStatusMessage) {
       buffer.putUint8(133);
       writeValue(buffer, value.index);
-    } else if (value is PcmFormatMessage) {
+    }    else if (value is PcmFormatMessage) {
       buffer.putUint8(134);
       writeValue(buffer, value.encode());
-    } else if (value is CaptureRequestMessage) {
+    }    else if (value is CaptureRequestMessage) {
       buffer.putUint8(135);
       writeValue(buffer, value.encode());
-    } else if (value is CaptureSessionInfoMessage) {
+    }    else if (value is CaptureSessionInfoMessage) {
       buffer.putUint8(136);
       writeValue(buffer, value.encode());
-    } else if (value is AudioFrameMessage) {
+    }    else if (value is AudioFrameMessage) {
       buffer.putUint8(137);
       writeValue(buffer, value.encode());
-    } else if (value is AudioFrameBatchMessage) {
+    }    else if (value is AudioFrameBatchMessage) {
       buffer.putUint8(138);
       writeValue(buffer, value.encode());
-    } else if (value is AudioSessionEventMessage) {
+    }    else if (value is AudioSessionEventMessage) {
       buffer.putUint8(139);
       writeValue(buffer, value.encode());
-    } else if (value is AudioProcessMessage) {
+    }    else if (value is AudioProcessMessage) {
       buffer.putUint8(140);
       writeValue(buffer, value.encode());
-    } else if (value is AudioInputDeviceMessage) {
+    }    else if (value is AudioInputDeviceMessage) {
       buffer.putUint8(141);
       writeValue(buffer, value.encode());
-    } else if (value is PlaybackRequestMessage) {
+    }    else if (value is PlaybackRequestMessage) {
       buffer.putUint8(142);
       writeValue(buffer, value.encode());
-    } else if (value is PlaybackSessionInfoMessage) {
+    }    else if (value is PlaybackSessionInfoMessage) {
       buffer.putUint8(143);
       writeValue(buffer, value.encode());
     } else {
@@ -850,9 +839,7 @@ class _PigeonCodec extends StandardMessageCodec {
         return value == null ? null : CaptureKindMessage.values[value];
       case 130:
         final value = readValue(buffer) as int?;
-        return value == null
-            ? null
-            : CaptureOverflowPolicyMessage.values[value];
+        return value == null ? null : CaptureOverflowPolicyMessage.values[value];
       case 131:
         final value = readValue(buffer) as int?;
         return value == null ? null : AudioSessionPhaseMessage.values[value];
@@ -861,9 +848,7 @@ class _PigeonCodec extends StandardMessageCodec {
         return value == null ? null : DiscontinuityReasonMessage.values[value];
       case 133:
         final value = readValue(buffer) as int?;
-        return value == null
-            ? null
-            : MicrophonePermissionStatusMessage.values[value];
+        return value == null ? null : MicrophonePermissionStatusMessage.values[value];
       case 134:
         return PcmFormatMessage.decode(readValue(buffer)!);
       case 135:
@@ -890,158 +875,133 @@ class _PigeonCodec extends StandardMessageCodec {
   }
 }
 
-const StandardMethodCodec pigeonMethodCodec = StandardMethodCodec(
-  _PigeonCodec(),
-);
+const StandardMethodCodec pigeonMethodCodec = StandardMethodCodec(_PigeonCodec());
 
 class DarwinAudioHostApi {
   /// Constructor for [DarwinAudioHostApi]. The [binaryMessenger] named argument is
   /// available for dependency injection. If it is left null, the default
   /// BinaryMessenger will be used which routes to the host platform.
-  DarwinAudioHostApi({
-    BinaryMessenger? binaryMessenger,
-    String messageChannelSuffix = '',
-  }) : pigeonVar_binaryMessenger = binaryMessenger,
-       pigeonVar_messageChannelSuffix = messageChannelSuffix.isNotEmpty
-           ? '.$messageChannelSuffix'
-           : '';
+  DarwinAudioHostApi({BinaryMessenger? binaryMessenger, String messageChannelSuffix = ''})
+      : pigeonVar_binaryMessenger = binaryMessenger,
+        pigeonVar_messageChannelSuffix = messageChannelSuffix.isNotEmpty ? '.$messageChannelSuffix' : '';
   final BinaryMessenger? pigeonVar_binaryMessenger;
 
   static const MessageCodec<Object?> pigeonChannelCodec = _PigeonCodec();
 
   final String pigeonVar_messageChannelSuffix;
 
-  Future<CaptureSessionInfoMessage> prepareCapture(
-    CaptureRequestMessage request,
-  ) async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.prepareCapture$pigeonVar_messageChannelSuffix';
+  Future<CaptureSessionInfoMessage> prepareCapture(CaptureRequestMessage request) async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.prepareCapture$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(
-      <Object?>[request],
-    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[request]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: false,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
     return pigeonVar_replyValue! as CaptureSessionInfoMessage;
   }
 
   Future<void> startCapture(int sessionId) async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.startCapture$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.startCapture$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(
-      <Object?>[sessionId],
-    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[sessionId]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: true,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
   }
 
-  Future<AudioFrameBatchMessage> readCaptureFrames(
-    int sessionId,
-    int maxFrames,
-    int timeoutMillis,
-  ) async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.readCaptureFrames$pigeonVar_messageChannelSuffix';
+  Future<AudioFrameBatchMessage> readCaptureFrames(int sessionId, int maxFrames, int timeoutMillis) async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.readCaptureFrames$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(
-      <Object?>[sessionId, maxFrames, timeoutMillis],
-    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[sessionId, maxFrames, timeoutMillis]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: false,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
     return pigeonVar_replyValue! as AudioFrameBatchMessage;
   }
 
   Future<void> stopCapture(int sessionId) async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.stopCapture$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.stopCapture$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(
-      <Object?>[sessionId],
-    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[sessionId]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: true,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
   }
 
   Future<void> abortCapture(int sessionId) async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.abortCapture$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.abortCapture$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(
-      <Object?>[sessionId],
-    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[sessionId]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: true,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
   }
 
   Future<void> disposeCapture(int sessionId) async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.disposeCapture$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.disposeCapture$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(
-      <Object?>[sessionId],
-    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[sessionId]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: true,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
   }
 
   Future<bool> isSystemAudioCaptureSupported() async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.isSystemAudioCaptureSupported$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.isSystemAudioCaptureSupported$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -1051,16 +1011,16 @@ class DarwinAudioHostApi {
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: false,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
     return pigeonVar_replyValue! as bool;
   }
 
   Future<bool> requestSystemAudioCapturePermission() async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.requestSystemAudioCapturePermission$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.requestSystemAudioCapturePermission$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -1070,16 +1030,16 @@ class DarwinAudioHostApi {
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: false,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
     return pigeonVar_replyValue! as bool;
   }
 
   Future<MicrophonePermissionStatusMessage> microphonePermissionStatus() async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.microphonePermissionStatus$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.microphonePermissionStatus$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -1089,17 +1049,16 @@ class DarwinAudioHostApi {
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: false,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
     return pigeonVar_replyValue! as MicrophonePermissionStatusMessage;
   }
 
-  Future<MicrophonePermissionStatusMessage>
-  requestMicrophonePermission() async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.requestMicrophonePermission$pigeonVar_messageChannelSuffix';
+  Future<MicrophonePermissionStatusMessage> requestMicrophonePermission() async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.requestMicrophonePermission$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -1109,16 +1068,16 @@ class DarwinAudioHostApi {
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: false,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
     return pigeonVar_replyValue! as MicrophonePermissionStatusMessage;
   }
 
   Future<int> cleanupOrphanedAggregateDevices() async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.cleanupOrphanedAggregateDevices$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.cleanupOrphanedAggregateDevices$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -1128,16 +1087,16 @@ class DarwinAudioHostApi {
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: false,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
     return pigeonVar_replyValue! as int;
   }
 
   Future<List<AudioInputDeviceMessage>> listAudioInputDevices() async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.listAudioInputDevices$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.listAudioInputDevices$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -1147,17 +1106,16 @@ class DarwinAudioHostApi {
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: false,
-    );
-    return (pigeonVar_replyValue! as List<Object?>)
-        .cast<AudioInputDeviceMessage>();
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
+    return (pigeonVar_replyValue! as List<Object?>).cast<AudioInputDeviceMessage>();
   }
 
   Future<List<AudioProcessMessage>> listAudioProcesses() async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.listAudioProcesses$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.listAudioProcesses$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
@@ -1167,137 +1125,121 @@ class DarwinAudioHostApi {
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: false,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
     return (pigeonVar_replyValue! as List<Object?>).cast<AudioProcessMessage>();
   }
 
-  Future<PlaybackSessionInfoMessage> preparePlayback(
-    PlaybackRequestMessage request,
-  ) async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.preparePlayback$pigeonVar_messageChannelSuffix';
+  Future<PlaybackSessionInfoMessage> preparePlayback(PlaybackRequestMessage request) async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.preparePlayback$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(
-      <Object?>[request],
-    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[request]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: false,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
     return pigeonVar_replyValue! as PlaybackSessionInfoMessage;
   }
 
   Future<void> startPlayback(int sessionId) async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.startPlayback$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.startPlayback$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(
-      <Object?>[sessionId],
-    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[sessionId]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: true,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
   }
 
-  Future<void> writePlaybackFrames(
-    int sessionId,
-    List<AudioFrameMessage> frames,
-  ) async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.writePlaybackFrames$pigeonVar_messageChannelSuffix';
+  Future<void> writePlaybackFrames(int sessionId, List<AudioFrameMessage> frames) async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.writePlaybackFrames$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(
-      <Object?>[sessionId, frames],
-    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[sessionId, frames]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: true,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
   }
 
   Future<void> finishPlayback(int sessionId) async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.finishPlayback$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.finishPlayback$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(
-      <Object?>[sessionId],
-    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[sessionId]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: true,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
   }
 
   Future<void> abortPlayback(int sessionId) async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.abortPlayback$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.abortPlayback$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(
-      <Object?>[sessionId],
-    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[sessionId]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: true,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
   }
 
   Future<void> disposePlayback(int sessionId) async {
-    final pigeonVar_channelName =
-        'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.disposePlayback$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channelName = 'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioHostApi.disposePlayback$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(
       pigeonVar_channelName,
       pigeonChannelCodec,
       binaryMessenger: pigeonVar_binaryMessenger,
     );
-    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(
-      <Object?>[sessionId],
-    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[sessionId]);
     final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
 
     _extractReplyValueOrThrow(
-      pigeonVar_replyList,
-      pigeonVar_channelName,
-      isNullValid: true,
-    );
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: true,
+    )
+    ;
   }
 }
 
@@ -1307,15 +1249,14 @@ class DarwinAudioHostApi {
 /// not be called multiple times for the same `instanceName`. To deliver
 /// events to multiple listeners, call this method once and listen to the
 /// returned broadcast stream multiple times instead.
-Stream<AudioSessionEventMessage> sessionEvents({String instanceName = ''}) {
+Stream<AudioSessionEventMessage> sessionEvents( {String instanceName = ''}) {
   if (instanceName.isNotEmpty) {
     instanceName = '.$instanceName';
   }
-  final EventChannel sessionEventsChannel = EventChannel(
-    'dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioEventChannelApi.sessionEvents$instanceName',
-    pigeonMethodCodec,
-  );
+  final EventChannel sessionEventsChannel =
+      EventChannel('dev.flutter.pigeon.audio_flutter_darwin.DarwinAudioEventChannelApi.sessionEvents$instanceName', pigeonMethodCodec);
   return sessionEventsChannel.receiveBroadcastStream().map((dynamic event) {
     return event as AudioSessionEventMessage;
   });
 }
+    
