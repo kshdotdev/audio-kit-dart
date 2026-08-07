@@ -32,6 +32,10 @@ jobs:
           channel: stable
           cache: true
           cache-sdk: true
+      - name: Clone the unpublished fluidaudio engine
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/kshdotdev/fluidaudio-dart ../fluidaudio-dart
       - name: Verify workspace
         run: ./tool/verify.sh
       - name: Validate publish archives
@@ -56,6 +60,10 @@ jobs:
           channel: stable
           cache: true
           cache-sdk: true
+      - name: Clone the unpublished fluidaudio engine
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/kshdotdev/fluidaudio-dart ../fluidaudio-dart
       - name: Resolve workspace
         run: flutter pub get
       - name: Build example app
@@ -100,6 +108,10 @@ jobs:
           channel: stable
           cache: true
           cache-sdk: true
+      - name: Clone the unpublished fluidaudio engine
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/kshdotdev/fluidaudio-dart ../fluidaudio-dart
       - name: Resolve workspace
         run: flutter pub get
       - name: Build example app
@@ -143,6 +155,10 @@ jobs:
           channel: stable
           cache: true
           cache-sdk: true
+      - name: Clone the unpublished fluidaudio engine
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/kshdotdev/fluidaudio-dart ../fluidaudio-dart
       - name: Resolve workspace
         run: flutter pub get
       - name: Start a PulseAudio daemon with a null sink
