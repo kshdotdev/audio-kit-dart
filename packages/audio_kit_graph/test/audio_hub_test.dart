@@ -293,7 +293,11 @@ final class _TestSource implements AudioSource {
 }
 
 final class _TestSourceSession implements AudioSourceSession {
-  _TestSourceSession(this.format, {required this.emitOnStart, this.stopFailure});
+  _TestSourceSession(
+    this.format, {
+    required this.emitOnStart,
+    this.stopFailure,
+  });
 
   @override
   final AudioFormat format;

@@ -72,7 +72,8 @@ final class FluidNativeRuntime implements FluidAudioRuntime {
         final current = await models.modelRoots();
         final sameModels =
             _modelsRootPath == null ||
-            _normalizePath(current.modelsRoot) == _normalizePath(_modelsRootPath);
+            _normalizePath(current.modelsRoot) ==
+                _normalizePath(_modelsRootPath);
         final sameTts =
             _ttsRootPath == null ||
             _normalizePath(current.ttsRoot) == _normalizePath(_ttsRootPath);
