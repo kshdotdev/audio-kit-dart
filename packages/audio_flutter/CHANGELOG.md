@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Add `AudioCaptureHealthCodes`: shared constants for the capture health
+  codes the darwin supervision loops emit, so hosts stop hand-copying the
+  string literals. A contract test greps the darwin Swift sources for every
+  constant, failing the suite if either side renames.
+
 ## 0.3.0
 
 - Add `FlutterAudioCaptureConfig.bundleIds`: application bundle IDs to capture

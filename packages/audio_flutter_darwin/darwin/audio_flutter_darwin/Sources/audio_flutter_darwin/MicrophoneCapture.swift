@@ -1,4 +1,5 @@
 import AVFoundation
+import AudioFlutterDarwinCore
 import Foundation
 import os
 
@@ -233,11 +234,6 @@ final class MicrophoneCaptureSession: NativeCaptureSession {
 
   private static let supervisionWindowNanos: UInt64 = 2_000_000_000
 
-  /// Consecutive silent windows tolerated while the input node keeps reporting
-  /// no usable format, so a device that never returns still ends the session
-  /// instead of supervising forever.
-  private static let maximumUnusableFormatWindows = 5
-
   /// Supervises input-tap delivery and repairs a tap that never attached.
   ///
   /// `AVAudioEngine.start()` succeeds even when `installTap` lost a race with a
@@ -252,9 +248,9 @@ final class MicrophoneCaptureSession: NativeCaptureSession {
   /// - A rebuild that actually happened, followed by another silent window.
   ///   The chain was repaired against a freshly read format and still delivers
   ///   nothing, so it is dead (`MicrophoneCaptureDead`).
-  /// - `maximumUnusableFormatWindows` consecutive windows in which the input
-  ///   node never presented a usable format, so no rebuild could even be
-  ///   attempted. The device is gone rather than broken
+  /// - `MicrophoneSupervisionDecider.maximumUnusableFormatWindows` consecutive
+  ///   windows in which the input node never presented a usable format, so no
+  ///   rebuild could even be attempted. The device is gone rather than broken
   ///   (`MicrophoneInputFormatUnavailable`).
   ///
   /// A rebuild skipped for want of a usable format therefore costs nothing
@@ -264,18 +260,25 @@ final class MicrophoneCaptureSession: NativeCaptureSession {
   /// can fail a session that is merely mid-transition, which is exactly the
   /// state a Bluetooth headset moving between its call and media profiles
   /// spends several windows in.
+  ///
+  /// The window timing, the tap reinstall, and the events are this method's;
+  /// which outcome a window's counters mean belongs to
+  /// [MicrophoneSupervisionDecider], where it is unit-tested.
   private func superviseDelivery() async {
-    var rebuilt = false
-    var reportedSilence = false
-    var reportedMissingFormat = false
-    var unusableFormatWindows = 0
-    var generation = tapGeneration.withLock { $0 }
+    var decider = MicrophoneSupervisionDecider(
+      tapGeneration: tapGeneration.withLock { $0 }
+    )
     while !Task.isCancelled, running.withLock({ $0 }) {
       try? await Task.sleep(nanoseconds: Self.supervisionWindowNanos)
       guard !Task.isCancelled, running.withLock({ $0 }) else { return }
       let statistics = assembler?.statistics()
-      if renderCycles.withLock({ $0 }) > 0 {
-        let receiving = (statistics?.nonZeroFrameCount ?? 0) > 0
+      let window = MicrophoneSupervisionDecider.Window(
+        renderCycles: renderCycles.withLock { $0 },
+        nonZeroFrameCount: statistics?.nonZeroFrameCount ?? 0,
+        tapGeneration: tapGeneration.withLock { $0 }
+      )
+      switch decider.evaluate(window) {
+      case .reportAliveAndStop(let receiving):
         events.emit(
           healthEvent(
             phase: .running,
@@ -286,17 +289,9 @@ final class MicrophoneCaptureSession: NativeCaptureSession {
           )
         )
         return
-      }
-      let current = tapGeneration.withLock { $0 }
-      if current != generation {
-        // The tap was rebuilt inside this window by a configuration-change
-        // recovery. Judge the new chain on a window of its own rather than on
-        // the dead one it replaced.
-        generation = current
-        unusableFormatWindows = 0
+      case .keepWaiting:
         continue
-      }
-      if rebuilt {
+      case .escalateDead:
         fail(
           code: "MicrophoneCaptureDead",
           message:
@@ -304,45 +299,31 @@ final class MicrophoneCaptureSession: NativeCaptureSession {
             + "after a rebuild against the current hardware format."
         )
         return
-      }
-      if !reportedSilence {
-        reportedSilence = true
-        events.emit(
-          healthEvent(
-            phase: .interrupted,
-            code: "MicrophoneTapSilent",
-            message:
-              "The microphone tap has delivered no audio; rebuilding it "
-              + "against the current hardware format.",
-            receivingAudio: false,
-            statistics: statistics
+      case .reinstallTap(let reportSilence):
+        if reportSilence {
+          events.emit(
+            healthEvent(
+              phase: .interrupted,
+              code: "MicrophoneTapSilent",
+              message:
+                "The microphone tap has delivered no audio; rebuilding it "
+                + "against the current hardware format.",
+              receivingAudio: false,
+              statistics: statistics
+            )
           )
-        )
-      }
-      switch reinstallTap() {
-      case .failed:
-        // The rebuild already failed the session.
-        return
-      case .reinstalled:
-        rebuilt = true
-        unusableFormatWindows = 0
-        generation = tapGeneration.withLock { $0 }
-      case .skipped:
-        // Nothing was torn down or rebuilt: the input node reports no usable
-        // format yet, or the session is stopping. The one rebuild is still
-        // owed, so the budget stays intact and only the bounded wait advances.
-        unusableFormatWindows += 1
-        if unusableFormatWindows >= Self.maximumUnusableFormatWindows {
-          fail(
-            code: "MicrophoneInputFormatUnavailable",
-            message:
-              "The microphone input device never presented a usable format, "
-              + "so the capture tap could not be rebuilt."
-          )
-          return
         }
-        if !reportedMissingFormat {
-          reportedMissingFormat = true
+        let outcome = reinstallTap()
+        switch decider.resolveReinstall(
+          outcome,
+          tapGeneration: tapGeneration.withLock { $0 }
+        ) {
+        case .stop:
+          // The rebuild already failed the session.
+          return
+        case .keepWaiting:
+          break
+        case .reportAwaitingInputFormat:
           events.emit(
             healthEvent(
               phase: .interrupted,
@@ -354,6 +335,14 @@ final class MicrophoneCaptureSession: NativeCaptureSession {
               statistics: statistics
             )
           )
+        case .escalateInputFormatUnavailable:
+          fail(
+            code: "MicrophoneInputFormatUnavailable",
+            message:
+              "The microphone input device never presented a usable format, "
+              + "so the capture tap could not be rebuilt."
+          )
+          return
         }
       }
     }
@@ -384,15 +373,11 @@ final class MicrophoneCaptureSession: NativeCaptureSession {
     )
   }
 
-  private enum TapReinstallOutcome {
-    /// The tap was reinstalled against a freshly read hardware format.
-    case reinstalled
-    /// Nothing was changed: the session is stopping, or the input node reports
-    /// no usable format yet and the existing tap is the better of the two.
-    case skipped
-    /// The reinstall could not complete and the session has been failed.
-    case failed
-  }
+  /// What a tap reinstall reports. Declared by the supervision decider, which
+  /// is the only thing that has to interpret it, so the watchdog cannot drift
+  /// from the reinstall it supervises.
+  private typealias TapReinstallOutcome =
+    MicrophoneSupervisionDecider.ReinstallOutcome
 
   /// Reacts to `AVAudioEngineConfigurationChange` for this engine.
   ///

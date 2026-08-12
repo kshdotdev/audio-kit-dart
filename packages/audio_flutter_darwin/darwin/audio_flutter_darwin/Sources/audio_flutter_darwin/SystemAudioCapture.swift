@@ -1,4 +1,5 @@
 import AVFoundation
+import AudioFlutterDarwinCore
 import Foundation
 import os
 
@@ -142,11 +143,19 @@ import os
     ///   broken and fails as `SystemCaptureDead`.
     /// - Converted buffers arriving all-zero: alive-but-silent health, the
     ///   documented shape of a TCC-denied tap.
+    ///
+    /// The window timing, the device probe, the rebuild, and the events are
+    /// this method's; which outcome a window's counters mean belongs to
+    /// [SystemCaptureSupervisionDecider], where it is unit-tested.
     private func superviseCapture(initialNonZeroFrameCount: Int64) async {
       try? await Task.sleep(nanoseconds: Self.supervisionWindowNanos)
       guard !Task.isCancelled, running.withLock({ $0 }) else { return }
       let checkStatistics = assembler.statistics()
-      if checkStatistics.nonZeroFrameCount > initialNonZeroFrameCount {
+      switch SystemCaptureSupervisionDecider.initialOutcome(
+        nonZeroFrameCount: checkStatistics.nonZeroFrameCount,
+        baselineNonZeroFrameCount: initialNonZeroFrameCount
+      ) {
+      case .reportReceiving:
         events.emit(
           healthEvent(
             phase: .running,
@@ -155,6 +164,8 @@ import os
           )
         )
         return
+      case .rebuildChain:
+        break
       }
       events.emit(
         healthEvent(
@@ -164,30 +175,29 @@ import os
           statistics: checkStatistics
         )
       )
+      guard rebuild() else { return }
       // Assembler counters are monotonic across a rebuild
       // (`markSourceRestart` only flags a discontinuity), so the pre-rebuild
       // snapshot is the baseline — callbacks landing while the new chain
       // starts count as progress instead of inflating a post-start baseline.
-      let baseline = checkStatistics
-      guard rebuild() else { return }
-      // `renderCycles` is a session-lifetime counter, so the armed test must
-      // compare against a rebuild-time baseline, not zero. Snapshotting after
-      // rebuild() returns is safe on the old-chain side (teardown drains
-      // `ioQueue`, so its increments have all landed) and at worst counts a
-      // few of the new chain's earliest cycles — which only delays the armed
-      // report by one window, because converted callbacks are checked first.
-      let renderCyclesBaseline = renderCycles.withLock { $0 }
-      var armedReported = false
-      var lastRenderCycles = renderCyclesBaseline
-      var ranWithoutConvertedAudio = false
+      // `renderCycles` is a session-lifetime counter too, so its baseline is
+      // read here rather than assumed to be zero.
+      var decider = SystemCaptureSupervisionDecider(
+        baselineCallbackCount: checkStatistics.callbackCount,
+        baselineNonZeroFrameCount: checkStatistics.nonZeroFrameCount,
+        renderCyclesBaseline: renderCycles.withLock { $0 }
+      )
       while !Task.isCancelled, running.withLock({ $0 }) {
         try? await Task.sleep(nanoseconds: Self.supervisionWindowNanos)
         guard !Task.isCancelled, running.withLock({ $0 }) else { return }
         let statistics = assembler.statistics()
-        let cycles = renderCycles.withLock { $0 }
-        if statistics.callbackCount > baseline.callbackCount {
-          let receiving =
-            statistics.nonZeroFrameCount > baseline.nonZeroFrameCount
+        let window = SystemCaptureSupervisionDecider.Window(
+          callbackCount: statistics.callbackCount,
+          nonZeroFrameCount: statistics.nonZeroFrameCount,
+          renderCycles: renderCycles.withLock { $0 }
+        )
+        switch decider.evaluate(window) {
+        case .reportAliveAndStop(let receiving):
           events.emit(
             healthEvent(
               phase: .running,
@@ -198,28 +208,21 @@ import os
             )
           )
           return
-        }
-        if cycles == renderCyclesBaseline {
+        case .probeDeviceRunning:
           lifecycle.lock()
           let aggregate = aggregateId
           lifecycle.unlock()
-          if Self.deviceIsRunning(aggregate) == true,
-            renderCycles.withLock({ $0 }) == renderCyclesBaseline
-          {
-            // Probing can race the chain coming alive, so the cycle counter
-            // is re-read after the probe. A device that reports running while
-            // the IO proc still has not fired has a broken render-callback
-            // registration, which waiting cannot repair.
-            fail(
-              code: "SystemCaptureDead",
-              message:
-                "The capture aggregate is running but its render callback "
-                + "never fired."
-            )
+          // Probing can race the chain coming alive, so the cycle counter is
+          // re-read after the probe.
+          let idle = decider.resolveIdleWindow(
+            deviceIsRunning: Self.deviceIsRunning(aggregate),
+            renderCyclesAfterProbe: renderCycles.withLock { $0 }
+          )
+          switch idle {
+          case .escalateDead(let death):
+            fail(code: "SystemCaptureDead", message: Self.message(for: death))
             return
-          }
-          if !armedReported {
-            armedReported = true
+          case .reportAwaitingAppAudio:
             events.emit(
               healthEvent(
                 phase: .interrupted,
@@ -231,23 +234,32 @@ import os
                 statistics: statistics
               )
             )
+          case .keepWaiting:
+            break
           }
-          continue
-        }
-        // The device ran but produced no converted audio. Require two
-        // consecutive windows with the device still advancing before failing,
-        // so buffers in flight through the converter don't count as death.
-        if ranWithoutConvertedAudio, cycles > lastRenderCycles {
-          fail(
-            code: "SystemCaptureDead",
-            message:
-              "The system tap ran \(cycles) render cycles but no audio "
-              + "survived conversion into the capture pipeline."
-          )
+        case .escalateDead(let death):
+          fail(code: "SystemCaptureDead", message: Self.message(for: death))
           return
+        case .keepWaiting:
+          break
         }
-        ranWithoutConvertedAudio = true
-        lastRenderCycles = cycles
+      }
+    }
+
+    /// The host-facing explanation of a supervision death.
+    private static func message(for death: SystemCaptureDeath) -> String {
+      switch death {
+      case .renderCallbackNeverFired:
+        // A device that reports running while the IO proc still has not fired
+        // has a broken render-callback registration, which waiting cannot
+        // repair.
+        return
+          "The capture aggregate is running but its render callback "
+          + "never fired."
+      case .noAudioSurvivedConversion(let renderCycles):
+        return
+          "The system tap ran \(renderCycles) render cycles but no audio "
+          + "survived conversion into the capture pipeline."
       }
     }
 
@@ -882,26 +894,18 @@ import os
       bundleIds: [String],
       processIds: [Int64]
     ) throws -> CATapDescription {
-      let targetBundleIds = bundleIds.filter { !$0.isEmpty }
+      let targetBundleIds = TapTargetSelection.sanitizedBundleIds(bundleIds)
       if targetBundleIds.isEmpty, processIds.isEmpty {
         let ownProcess = translatePid(getpid())
         let excluded =
           ownProcess == AudioObjectID(kAudioObjectUnknown) ? [] : [ownProcess]
         return CATapDescription(stereoGlobalTapButExcludeProcesses: excluded)
       }
-      var objects: [AudioObjectID] = []
-      var seen = Set<AudioObjectID>()
-      for object in processObjects(matchingBundleIds: targetBundleIds)
-        + processIds.compactMap({ value -> AudioObjectID? in
-          guard let pid = pid_t(exactly: value) else { return nil }
-          let object = translatePid(pid)
-          return object == AudioObjectID(kAudioObjectUnknown) ? nil : object
-        })
-      {
-        if seen.insert(object).inserted {
-          objects.append(object)
-        }
-      }
+      let objects = TapTargetSelection.tapTargetObjects(
+        bundleMatches: processObjects(matchingBundleIds: targetBundleIds),
+        processIds: processIds,
+        translate: translatePid
+      )
       if !targetBundleIds.isEmpty, #available(macOS 26.0, *) {
         // A plain `CATapDescription()` leaves `mixdown` false, which taps the
         // device's channels rather than mixing the tapped processes down. The
@@ -954,18 +958,15 @@ import os
     /// The described stream layout re-rated to the device's nominal sample
     /// rate, which is what the device's IO proc actually delivers. Falls back
     /// to the described format when the rate cannot be read.
+    ///
+    /// The device read is this method's; the re-rate itself is
+    /// [CaptureFormatMath.formatAtRate], where it is unit-tested.
     static func formatAtDeviceRate(
       _ described: AVAudioFormat,
       device: AudioObjectID
     ) -> AVAudioFormat {
-      guard
-        let rate = deviceNominalSampleRate(device),
-        rate > 0,
-        rate != described.sampleRate
-      else { return described }
-      var description = described.streamDescription.pointee
-      description.mSampleRate = rate
-      return AVAudioFormat(streamDescription: &description) ?? described
+      guard let rate = deviceNominalSampleRate(device) else { return described }
+      return CaptureFormatMath.formatAtRate(described, rate: rate)
     }
 
     static func deviceNominalSampleRate(_ device: AudioObjectID) -> Double? {
@@ -1303,24 +1304,20 @@ import os
 
     /// The process objects that belong to [bundleIds] right now.
     ///
-    /// A bundle ID owns its own process and its helper namespace (`id.*`),
-    /// matched case-insensitively — never a different app whose bundle ID
-    /// merely starts with the same characters. This mirrors the Dart
-    /// selector's namespace rule, and matching the namespace natively also
-    /// catches helpers that spawned after the host expanded its selection.
+    /// The enumeration is this method's; the namespace rule it filters with is
+    /// [TapTargetSelection.processObjects], where it is unit-tested. The empty
+    /// selection is answered before the enumeration, so a process-ID-only tap
+    /// never pays for a process list it cannot match against.
     static func processObjects(matchingBundleIds bundleIds: [String])
       -> [AudioObjectID]
     {
       guard !bundleIds.isEmpty else { return [] }
-      let targets = bundleIds.map { $0.lowercased() }
-      return processObjects().compactMap { process in
-        let candidate = process.bundleId.lowercased()
-        guard !candidate.isEmpty else { return nil }
-        let matches = targets.contains { target in
-          candidate == target || candidate.hasPrefix(target + ".")
+      return TapTargetSelection.processObjects(
+        matchingBundleIds: bundleIds,
+        in: processObjects().map {
+          TapCandidateProcess(object: $0.object, bundleId: $0.bundleId)
         }
-        return matches ? process.object : nil
-      }
+      )
     }
 
     static func listProcesses() -> [AudioProcessMessage] {
