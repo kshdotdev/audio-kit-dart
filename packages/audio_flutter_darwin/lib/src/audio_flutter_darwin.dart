@@ -47,6 +47,9 @@ final class DarwinAudioFlutterPlatform extends AudioFlutterPlatform {
             pigeon.CaptureOverflowPolicyMessage.failCapture,
         },
         processIds: request.processIds,
+        // Empty and null mean the same thing to the native side: no bundle-ID
+        // targets, so the process list decides what is tapped.
+        bundleIds: request.bundleIds,
         inputDeviceId: request.inputDeviceId,
         rawRecordingPath: request.rawRecordingPath,
       ),
@@ -100,8 +103,8 @@ final class DarwinAudioFlutterPlatform extends AudioFlutterPlatform {
 
   /// Advisory on macOS: the grant is enforced at delivery, so this preflight
   /// can report `true` for a tap that will only ever deliver silence. Capture
-  /// health (a running session with `receivingAudio` false, then
-  /// `SystemCaptureDead`) is the authoritative signal.
+  /// health (a running session with `receivingAudio` false, or an armed one
+  /// reporting `SystemCaptureAwaitingAppAudio`) is the authoritative signal.
   @override
   Future<bool> requestSystemAudioCapturePermission() =>
       _host.requestSystemAudioCapturePermission();
