@@ -112,6 +112,13 @@ enum PlatformAudioDiscontinuityReason {
   droppedFrames,
   sourceRestart,
   clockReset,
+
+  /// No platform implementation emits this today: the darwin captures
+  /// respond to a mid-capture format change by rebuilding the chain (frames
+  /// resume with [sourceRestart]) and disclosing it through capture health
+  /// events (`CaptureSampleRateChanged` / `MicrophoneInputFormatChanged`).
+  /// The value is kept for wire stability and for hosts' processing
+  /// pipelines, which do synthesize format-change discontinuities.
   formatChange,
   unknown,
 }
