@@ -97,11 +97,13 @@ final class FlutterAudioCaptureConfig {
     this.maxBufferedDuration = const Duration(seconds: 2),
     this.overflowPolicy = AudioCaptureOverflowPolicy.failCapture,
     List<int> processIds = const <int>[],
+    List<String> bundleIds = const <String>[],
     this.inputDeviceId,
     this.rawRecordingPath,
     this.logicalSourceId,
     this.timingQuality,
-  }) : processIds = List<int>.unmodifiable(processIds) {
+  }) : processIds = List<int>.unmodifiable(processIds),
+       bundleIds = List<String>.unmodifiable(bundleIds) {
     if (frameDuration <= Duration.zero) {
       throw ArgumentError.value(
         frameDuration,
@@ -129,6 +131,19 @@ final class FlutterAudioCaptureConfig {
         processIds,
         'processIds',
         'Must contain unique positive process IDs.',
+      );
+    }
+    // Bundle IDs are matched case-insensitively by the platforms that tap by
+    // identity, so two spellings of one app are a duplicate, not two targets.
+    final Set<String> distinctBundleIds = bundleIds
+        .map((String bundleId) => bundleId.toLowerCase())
+        .toSet();
+    if (bundleIds.any((String bundleId) => bundleId.trim().isEmpty) ||
+        distinctBundleIds.length != bundleIds.length) {
+      throw ArgumentError.value(
+        bundleIds,
+        'bundleIds',
+        'Must contain unique non-empty bundle IDs.',
       );
     }
     if (inputDeviceId != null && inputDeviceId!.trim().isEmpty) {
@@ -160,6 +175,17 @@ final class FlutterAudioCaptureConfig {
   final Duration maxBufferedDuration;
   final AudioCaptureOverflowPolicy overflowPolicy;
   final List<int> processIds;
+
+  /// Applications to capture, named by bundle ID rather than by process.
+  ///
+  /// Use it alongside or instead of [processIds]: a bundle ID keeps naming the
+  /// same app after its helpers respawn or the app itself restarts, which a
+  /// process list captured before the session started cannot. On macOS 26 the
+  /// tap targets these identities directly and survives the app's exit;
+  /// earlier versions re-resolve them to processes whenever the capture chain
+  /// is rebuilt. See [SystemAudioProcessSelector.expandBundleIds] for turning
+  /// a user's app choice into this list.
+  final List<String> bundleIds;
   final String? inputDeviceId;
   final String? rawRecordingPath;
 
@@ -207,6 +233,7 @@ final class FlutterAudioCaptureSource implements AudioSource {
               PlatformCaptureOverflowPolicy.failCapture,
           },
           processIds: config.processIds,
+          bundleIds: config.bundleIds,
           inputDeviceId: config.inputDeviceId,
           rawRecordingPath: config.rawRecordingPath,
         ),

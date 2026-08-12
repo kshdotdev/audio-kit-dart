@@ -197,6 +197,11 @@ void main() {
     expect(await frames, hasLength(1));
 
     expect(platform.lastCaptureRequest?.processIds, <int>[42]);
+    // The application's identity travels with its process set, so a platform
+    // that taps by bundle ID keeps the app across helper respawns.
+    expect(platform.lastCaptureRequest?.bundleIds, <String>[
+      'com.example.meeting',
+    ]);
     expect(session.sourceId, 'test.application.42');
     expect(session.timingQuality, MonotonicTrackTimingQuality.nativeMapped);
     expect(session.timing?.clockId, 'test-host-clock');
@@ -210,6 +215,40 @@ void main() {
 
     await expectLater(backend.start(start), throwsStateError);
     await session.stop();
+    await session.close();
+  });
+
+  test('a source without an application identity names no bundle', () async {
+    final _FakeCapturePlatform platform = _FakeCapturePlatform(
+      sources: const <PlatformCaptureSourceInfo>[
+        PlatformCaptureSourceInfo(
+          sourceId: 'test.system-mix',
+          kind: PlatformCaptureSourceKind.systemMix,
+          displayName: 'System mix',
+          availability: PlatformCaptureSourceAvailability.available,
+          captureKind: PlatformCaptureKind.systemAudio,
+          timingQuality: PlatformCaptureTimingQuality.nativeMapped,
+          capabilities: <PlatformCaptureCapability>{
+            PlatformCaptureCapability.systemMix,
+          },
+        ),
+      ],
+    );
+    final FlutterCaptureBackend backend = await FlutterCaptureBackend.create(
+      platform: platform,
+    );
+    final CaptureProbeRequest request = CaptureProbeRequest(
+      requestId: 'request-system-mix',
+      sourceId: 'test.system-mix',
+      outputFormat: format,
+    );
+    final CaptureProbeResult probe = await backend.probe(request);
+    final AudioSourceSession session = await backend.start(
+      probe.authorize(request),
+    );
+
+    expect(platform.lastCaptureRequest?.bundleIds, isEmpty);
+    expect(platform.lastCaptureRequest?.processIds, isEmpty);
     await session.close();
   });
 

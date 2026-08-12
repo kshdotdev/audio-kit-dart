@@ -24,6 +24,12 @@ import 'system_audio.dart';
 ///   type: AudioCaptureType.systemAudio,
 ///   format: format,
 ///   processIds: targets.map((p) => p.processId).toSet().toList(),
+///   // Identity outlives the snapshot: pass it so platforms that tap by
+///   // bundle ID keep the app after its helpers respawn.
+///   bundleIds: const SystemAudioProcessSelector().expandBundleIds(
+///     processes: processes,
+///     bundleIds: <String>['com.microsoft.teams2'],
+///   ),
 /// );
 /// ```
 final class SystemAudioProcessSelector {
@@ -147,54 +153,17 @@ final class SystemAudioProcessSelector {
     Iterable<int> processIds = const <int>[],
     Map<int, String> processNames = const <int, String>{},
   }) {
-    final Set<String> bundleNamespaces = <String>{};
-    final Set<String> loosePrefixes = <String>{...bundlePrefixes};
-    for (final String bundleId in <String>[
-      ...bundleIds,
-      // A PID-only caller is a bundle-ID caller once the snapshot resolves it.
-      for (final int processId in processIds)
-        ...processes
-            .where(
-              (AudioCaptureProcess process) =>
-                  process.processId == processId && process.bundleId.isNotEmpty,
-            )
-            .map((AudioCaptureProcess process) => process.bundleId),
-    ]) {
-      // A helper stands for its app, so the app's whole helper namespace and
-      // the app's own external media processes come along.
-      final String target = _parentBundleId(bundleId) ?? bundleId;
-      bundleNamespaces.add(target);
-      bundleNamespaces.addAll(
-        externalMediaBundlePrefixes[target] ?? const <String>[],
-      );
-      // Any member of a known family pulls in the whole family: builds that
-      // ship as `com.microsoft.teams` and `com.microsoft.teams2` are one app
-      // to the user, and a helper can carry either.
-      loosePrefixes.addAll(
-        familyBundlePrefixes.where(
-          (String prefix) => _startsWith(bundleId, prefix),
-        ),
-      );
-    }
-    bundleNamespaces.removeWhere((String prefix) => prefix.isEmpty);
-    loosePrefixes.removeWhere((String prefix) => prefix.isEmpty);
-
-    // The name rules exist to catch helpers of an already-selected family that
-    // ship under an unrelated bundle ID; they never introduce a new family.
-    final bool familySelected = familyBundlePrefixes.any(
-      loosePrefixes.contains,
+    final _SelectorTargets targets = _resolveTargets(
+      processes: processes,
+      bundleIds: bundleIds,
+      bundlePrefixes: bundlePrefixes,
+      processIds: processIds,
     );
 
     final Set<int> seen = <int>{};
     return <AudioCaptureProcess>[
       for (final AudioCaptureProcess process in processes)
-        if (_selects(
-              process: process,
-              bundleNamespaces: bundleNamespaces,
-              loosePrefixes: loosePrefixes,
-              name: processNames[process.processId],
-              familySelected: familySelected,
-            ) &&
+        if (targets.selects(process, name: processNames[process.processId]) &&
             seen.add(process.processId))
           process,
     ];
@@ -216,6 +185,52 @@ final class SystemAudioProcessSelector {
     processNames: processNames,
   ).map((AudioCaptureProcess process) => process.processId).toList();
 
+  /// Returns the bundle IDs that stand for the requested targets, to hand to
+  /// `FlutterAudioCaptureConfig.bundleIds`.
+  ///
+  /// Where [expandProcessIds] answers "what is playing this app's audio right
+  /// now", this answers "which applications is the caller asking for" — the
+  /// answer a platform needs to keep following the app after a helper
+  /// respawns or the app itself restarts. It contains, in order and without
+  /// case-insensitive duplicates:
+  /// - each requested target widened from a helper to the app that owns it,
+  ///   plus the known-family bundle IDs that target belongs to, so a family
+  ///   member that is not running yet is still named; and
+  /// - the bundle ID of every process [expand] currently selects, so a
+  ///   platform that resolves bundle IDs to processes sees today's helpers
+  ///   without having to know the helper naming rules.
+  ///
+  /// An empty result means nothing matched and the caller named nothing
+  /// resolvable, which is the same real answer [expand] gives.
+  List<String> expandBundleIds({
+    required List<AudioCaptureProcess> processes,
+    Iterable<String> bundleIds = const <String>[],
+    Iterable<String> bundlePrefixes = const <String>[],
+    Iterable<int> processIds = const <int>[],
+    Map<int, String> processNames = const <int, String>{},
+  }) {
+    final _SelectorTargets targets = _resolveTargets(
+      processes: processes,
+      bundleIds: bundleIds,
+      bundlePrefixes: bundlePrefixes,
+      processIds: processIds,
+    );
+
+    final Set<String> seen = <String>{};
+    final List<String> selected = <String>[];
+    for (final String bundleId in <String>[
+      ...targets.namedApplications,
+      for (final AudioCaptureProcess process in processes)
+        if (targets.selects(process, name: processNames[process.processId]))
+          process.bundleId,
+    ]) {
+      if (bundleId.isNotEmpty && seen.add(bundleId.toLowerCase())) {
+        selected.add(bundleId);
+      }
+    }
+    return selected;
+  }
+
   /// Whether [bundleId] looks like an Electron or Chromium helper process.
   ///
   /// Presentational only: helpers are tapped because they match their app's
@@ -228,31 +243,59 @@ final class SystemAudioProcessSelector {
     );
   }
 
-  bool _selects({
-    required AudioCaptureProcess process,
-    required Set<String> bundleNamespaces,
-    required Set<String> loosePrefixes,
-    required String? name,
-    required bool familySelected,
+  /// Resolves a caller's targets into the matching rules every expansion
+  /// shares, so process expansion and bundle-ID expansion can never drift.
+  _SelectorTargets _resolveTargets({
+    required List<AudioCaptureProcess> processes,
+    required Iterable<String> bundleIds,
+    required Iterable<String> bundlePrefixes,
+    required Iterable<int> processIds,
   }) {
-    if (bundleNamespaces.any(
-      (String prefix) => _matchesNamespace(process.bundleId, prefix),
-    )) {
-      return true;
+    final List<String> namedApplications = <String>[];
+    final Set<String> bundleNamespaces = <String>{};
+    final Set<String> loosePrefixes = <String>{...bundlePrefixes};
+    for (final String bundleId in <String>[
+      ...bundleIds,
+      // A PID-only caller is a bundle-ID caller once the snapshot resolves it.
+      for (final int processId in processIds)
+        ...processes
+            .where(
+              (AudioCaptureProcess process) =>
+                  process.processId == processId && process.bundleId.isNotEmpty,
+            )
+            .map((AudioCaptureProcess process) => process.bundleId),
+    ]) {
+      // A helper stands for its app, so the app's whole helper namespace and
+      // the app's own external media processes come along.
+      final String target = _parentBundleId(bundleId) ?? bundleId;
+      bundleNamespaces.add(target);
+      namedApplications.add(target);
+      bundleNamespaces.addAll(
+        externalMediaBundlePrefixes[target] ?? const <String>[],
+      );
+      // Any member of a known family pulls in the whole family: builds that
+      // ship as `com.microsoft.teams` and `com.microsoft.teams2` are one app
+      // to the user, and a helper can carry either.
+      final Iterable<String> families = familyBundlePrefixes.where(
+        (String prefix) => _startsWith(bundleId, prefix),
+      );
+      loosePrefixes.addAll(families);
+      // A family prefix is itself a shipped bundle ID, unlike the raw
+      // prefixes a caller passes, so it can name an application on its own.
+      namedApplications.addAll(families);
     }
-    if (loosePrefixes.any(
-      (String prefix) => _startsWith(process.bundleId, prefix),
-    )) {
-      return true;
-    }
-    if (!familySelected || name == null || process.bundleId.isEmpty) {
-      return false;
-    }
-    // Name matching only ever adds processes to an already-selected family,
-    // and only ones the audio server can attribute to a bundle at all.
-    final String lowercased = name.toLowerCase();
-    return familyProcessNamePrefixes.any(
-      (String prefix) => lowercased.startsWith(prefix),
+    bundleNamespaces.removeWhere((String prefix) => prefix.isEmpty);
+    loosePrefixes.removeWhere((String prefix) => prefix.isEmpty);
+
+    return _SelectorTargets(
+      namedApplications: namedApplications,
+      bundleNamespaces: bundleNamespaces,
+      loosePrefixes: loosePrefixes,
+      // The name rules exist to catch helpers of an already-selected family
+      // that ship under an unrelated bundle ID; they never introduce a new
+      // family.
+      familySelected: familyBundlePrefixes.any(loosePrefixes.contains),
+      familyProcessNamePrefixes: familyProcessNamePrefixes,
     );
   }
 
@@ -299,4 +342,49 @@ final class SystemAudioProcessSelector {
       bundleId.isNotEmpty &&
       prefix.isNotEmpty &&
       bundleId.toLowerCase().startsWith(prefix.toLowerCase());
+}
+
+/// One caller's targets, resolved once into the rules both expansions read.
+final class _SelectorTargets {
+  const _SelectorTargets({
+    required this.namedApplications,
+    required this.bundleNamespaces,
+    required this.loosePrefixes,
+    required this.familySelected,
+    required this.familyProcessNamePrefixes,
+  });
+
+  /// Applications the caller named, in request order and helper-widened.
+  final List<String> namedApplications;
+
+  final Set<String> bundleNamespaces;
+  final Set<String> loosePrefixes;
+  final bool familySelected;
+  final List<String> familyProcessNamePrefixes;
+
+  bool selects(AudioCaptureProcess process, {required String? name}) {
+    if (bundleNamespaces.any(
+      (String prefix) => SystemAudioProcessSelector._matchesNamespace(
+        process.bundleId,
+        prefix,
+      ),
+    )) {
+      return true;
+    }
+    if (loosePrefixes.any(
+      (String prefix) =>
+          SystemAudioProcessSelector._startsWith(process.bundleId, prefix),
+    )) {
+      return true;
+    }
+    if (!familySelected || name == null || process.bundleId.isEmpty) {
+      return false;
+    }
+    // Name matching only ever adds processes to an already-selected family,
+    // and only ones the audio server can attribute to a bundle at all.
+    final String lowercased = name.toLowerCase();
+    return familyProcessNamePrefixes.any(
+      (String prefix) => lowercased.startsWith(prefix),
+    );
+  }
 }
