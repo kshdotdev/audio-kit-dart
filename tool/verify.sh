@@ -56,3 +56,18 @@ for package_dir in "${package_dirs[@]}"; do
     flutter test "$package_dir/test"
   fi
 done
+
+# The Darwin plugin's Flutter-free core: the capture supervision windows and
+# the sample-rate re-rate math, which no Dart test can reach. Needs a Swift
+# toolchain, so it runs on macOS only.
+#
+# `swift test` builds every target a package declares, and the plugin target
+# imports FlutterMacOS, so the manifest narrows itself to the core and its
+# XCTest target when AUDIO_FLUTTER_DARWIN_CORE_TESTS is set. Nothing else ever
+# sets it; a Flutter build still resolves the plugin library product.
+if [[ "$(uname)" == "Darwin" ]]; then
+  (
+    cd packages/audio_flutter_darwin/darwin/audio_flutter_darwin
+    AUDIO_FLUTTER_DARWIN_CORE_TESTS=1 swift test
+  )
+fi
