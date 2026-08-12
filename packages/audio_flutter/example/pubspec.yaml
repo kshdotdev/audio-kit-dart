@@ -10,7 +10,7 @@ environment:
 
 dependencies:
   audio_core: ^0.1.0
-  audio_flutter: ^0.2.0
+  audio_flutter: ^0.3.0
   # audio_flutter endorses Darwin and Linux but not Windows, so the host app
   # depends on the Windows implementation directly. That direct dependency is
   # what pulls windows/CMakeLists.txt into the app build and compiles the

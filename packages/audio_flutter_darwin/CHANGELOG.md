@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.3.0
+
+- **Wire format: upgrade Dart and native together.** The regenerated pigeon
+  messages (`Messages.g.dart` / `Messages.g.swift`) insert
+  `CaptureRequestMessage.bundleIds` at positional index 6, shifting
+  `inputDeviceId` and `rawRecordingPath` up by one. A 0.2.0 Swift pod against
+  0.3.0 Dart (or vice versa) mis-decodes capture requests silently.
+- **New terminal failure modes for microphone capture.** A microphone tap
+  that stays silent past the supervision budget now fails the session with
+  `MicrophoneCaptureDead` (only after a real rebuild was attempted) or
+  `MicrophoneInputFormatUnavailable` (five consecutive windows with no usable
+  input format); `MicrophoneEngineRestartFailed` reports a failed engine
+  restart. Previously a dead microphone recorded silence forever. These
+  three arrive as `failed` (fatal); every other new code below is an
+  `interrupted` disclosure, not a failure.
+- Replace the one-shot capture watchdog with a windowed supervision loop.
+  An armed system tap whose target app has not rendered audio yet reports
+  `SystemCaptureAwaitingAppAudio` (once per session) instead of dying;
+  `SystemCaptureDead` is reserved for a running aggregate device whose IO
+  proc never fires, or two consecutive advancing windows with render cycles
+  but no converted audio.
+- Fix a 2× playback-speed corruption: IO-proc buffers are now wrapped in the
+  tap layout re-rated to the aggregate's nominal sample rate
+  (`formatAtDeviceRate`) instead of the tap's advertised format, which lies
+  when the clock device renegotiates (Bluetooth A2DP↔HFP). A nominal-rate
+  listener on the aggregate emits `CaptureSampleRateChanged` and rebuilds the
+  chain on renegotiation.
+- Microphone capture reads its input format once at start, rebuilds the
+  converter from that same read, and registers its configuration-change
+  observer before `engine.start()`. Recovery emits
+  `MicrophoneInputFormatChanged` after a successful tap reinstall;
+  `MicrophoneTapSilent` and `MicrophoneAwaitingInputFormat` disclose
+  transient states; a bounded skip budget escalates to
+  `MicrophoneInputFormatUnavailable`, and `MicrophoneCaptureDead` requires a
+  real rebuild attempt first.
+- Close the raw source-native recording when the delivered format changes
+  mid-capture (`MicrophoneRecordingFormatChanged` /
+  `SystemRecordingFormatChanged`): one WAV file cannot hold two formats.
+- On macOS 26+, tap descriptions target `CATapDescription.bundleIDs` with
+  process restoration enabled; older systems resolve bundle IDs to process
+  objects at tap-build time.
+- The unclocked-aggregate fallback no longer reports a `clockDeviceUid` it
+  does not have.
+
 ## 0.2.0
 
 - Implement `microphonePermissionStatus()` and `requestMicrophonePermission()`

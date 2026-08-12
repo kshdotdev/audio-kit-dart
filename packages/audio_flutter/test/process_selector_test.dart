@@ -349,6 +349,126 @@ void main() {
     );
   });
 
+  test(
+    'bundle-ID expansion names the app and the helpers it plays through',
+    () {
+      const List<AudioCaptureProcess> processes = <AudioCaptureProcess>[
+        finder,
+        AudioCaptureProcess(
+          processId: 10,
+          bundleId: 'com.google.Chrome',
+          isProducingAudio: false,
+        ),
+        AudioCaptureProcess(
+          processId: 11,
+          bundleId: 'com.google.Chrome.helper',
+          isProducingAudio: true,
+        ),
+        AudioCaptureProcess(
+          processId: 13,
+          bundleId: 'com.google.ChromeRemoteDesktop',
+          isProducingAudio: true,
+        ),
+      ];
+
+      expect(
+        const SystemAudioProcessSelector().expandBundleIds(
+          processes: processes,
+          bundleIds: <String>['com.google.Chrome'],
+        ),
+        <String>['com.google.Chrome', 'com.google.Chrome.helper'],
+      );
+    },
+  );
+
+  test('a helper PID names the application that owns it', () {
+    // Only the helper is playing, so a PID-shaped selection still has to come
+    // back with the identity that survives the helper being replaced.
+    const List<AudioCaptureProcess> processes = <AudioCaptureProcess>[
+      AudioCaptureProcess(
+        processId: 21,
+        bundleId: 'com.brave.Browser.helper.renderer',
+        isProducingAudio: true,
+      ),
+    ];
+
+    expect(
+      const SystemAudioProcessSelector().expandBundleIds(
+        processes: processes,
+        processIds: <int>[21],
+      ),
+      <String>['com.brave.Browser', 'com.brave.Browser.helper.renderer'],
+    );
+  });
+
+  test('a family is named in full even when one build is not running', () {
+    const List<AudioCaptureProcess> processes = <AudioCaptureProcess>[
+      finder,
+      AudioCaptureProcess(
+        processId: 31,
+        bundleId: 'com.microsoft.teams2',
+        isProducingAudio: false,
+      ),
+      AudioCaptureProcess(
+        processId: 32,
+        bundleId: 'com.microsoft.teams2.helper',
+        isProducingAudio: true,
+      ),
+    ];
+
+    // `com.microsoft.teams` is a shipped bundle ID, so naming it arms the
+    // classic build for a platform that restores tapped apps on launch.
+    expect(
+      const SystemAudioProcessSelector().expandBundleIds(
+        processes: processes,
+        bundleIds: <String>['com.microsoft.teams2'],
+      ),
+      <String>[
+        'com.microsoft.teams2',
+        'com.microsoft.teams',
+        'com.microsoft.teams2.helper',
+      ],
+    );
+  });
+
+  test('raw prefixes never masquerade as bundle IDs', () {
+    const List<AudioCaptureProcess> processes = <AudioCaptureProcess>[
+      AudioCaptureProcess(
+        processId: 70,
+        bundleId: 'com.acme.Studio',
+        isProducingAudio: true,
+      ),
+    ];
+
+    // The prefix selects the process, but only the process's real bundle ID
+    // is named: `com.acme.Stu` identifies no application.
+    expect(
+      const SystemAudioProcessSelector().expandBundleIds(
+        processes: processes,
+        bundlePrefixes: <String>['com.acme.Stu'],
+      ),
+      <String>['com.acme.Studio'],
+    );
+  });
+
+  test('an unmatched target still names the application it asked for', () {
+    // Nothing of the app is running yet: the identity is the whole answer,
+    // and it is what arms a restoring tap for the app's next launch.
+    expect(
+      const SystemAudioProcessSelector().expandBundleIds(
+        processes: const <AudioCaptureProcess>[finder],
+        bundleIds: <String>['com.google.Chrome.helper.gpu'],
+      ),
+      <String>['com.google.Chrome'],
+    );
+    expect(
+      const SystemAudioProcessSelector().expandBundleIds(
+        processes: const <AudioCaptureProcess>[finder],
+      ),
+      isEmpty,
+    );
+  });
+
   test('helper bundle IDs are recognisable for display', () {
     expect(
       SystemAudioProcessSelector.isHelperBundleId(

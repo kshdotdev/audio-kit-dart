@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.0
+
+- Add `FlutterAudioCaptureConfig.bundleIds`: application bundle IDs to capture
+  by durable identity instead of a process list frozen at start. Platforms
+  that can tap by identity (macOS 26+) do exactly that; the rest re-resolve
+  the IDs to processes whenever they build a capture chain.
+- `FlutterCaptureBackend` derives the bundle-ID set for a source during probe,
+  so an authorized capture targets the application family rather than the
+  single process the user happened to pick.
+- Add `SystemAudioProcessSelector.expandBundleIds`, the bundle-namespace
+  companion to `expand` for hosts that pass durable bundle identities through
+  `bundleIds`.
+- Requires `audio_flutter_darwin` 0.3.0, whose supervision rework emits new
+  capture health codes hosts can match on — see that changelog for the codes,
+  their fatal/non-fatal split, and the wire-format note.
+
 ## 0.2.0
 
 - Add `SystemAudioProcessSelector`, a pure expansion of a target app set over a

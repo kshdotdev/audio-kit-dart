@@ -170,6 +170,7 @@ final class PlatformCaptureRequest {
     this.maxBufferedDuration = const Duration(seconds: 2),
     this.overflowPolicy = PlatformCaptureOverflowPolicy.failCapture,
     this.processIds = const <int>[],
+    this.bundleIds = const <String>[],
     this.inputDeviceId,
     this.rawRecordingPath,
   });
@@ -180,8 +181,20 @@ final class PlatformCaptureRequest {
   final Duration maxBufferedDuration;
   final PlatformCaptureOverflowPolicy overflowPolicy;
 
-  /// Empty means all system audio except the current process.
+  /// Empty means all system audio except the current process, unless
+  /// [bundleIds] names the applications to capture.
   final List<int> processIds;
+
+  /// Application bundle IDs to capture, independent of which processes carry
+  /// them right now.
+  ///
+  /// Identity outlives a process: a helper that spawns after the capture
+  /// started, or an app that quits and relaunches, is still the same target.
+  /// Platforms that can tap by identity (macOS 26 and newer) do exactly that;
+  /// the rest resolve these to processes every time they build a capture
+  /// chain, which is still stronger than a process list frozen at start.
+  /// Ignored by platforms with no application identity of their own.
+  final List<String> bundleIds;
   final String? inputDeviceId;
 
   /// Optional source-side recording, finalized by graceful stop.

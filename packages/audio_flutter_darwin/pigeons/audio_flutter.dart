@@ -54,6 +54,7 @@ class CaptureRequestMessage {
     required this.maxBufferedDurationMicros,
     required this.overflowPolicy,
     required this.processIds,
+    this.bundleIds,
     this.inputDeviceId,
     this.rawRecordingPath,
   });
@@ -64,6 +65,14 @@ class CaptureRequestMessage {
   int maxBufferedDurationMicros;
   CaptureOverflowPolicyMessage overflowPolicy;
   List<int> processIds;
+
+  /// Application bundle IDs to tap, independent of which processes currently
+  /// carry them.
+  ///
+  /// macOS 26 taps these identities directly and restores them across app
+  /// exit and relaunch; older versions resolve them to process objects when
+  /// the chain is built, which is re-done on every rebuild.
+  List<String>? bundleIds;
   String? inputDeviceId;
   String? rawRecordingPath;
 }

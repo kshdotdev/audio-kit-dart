@@ -39,11 +39,21 @@ import os
     private var aggregateId = AudioObjectID(kAudioObjectUnknown)
     private var aggregateUid: String?
     private var clockDeviceUid: String?
+    /// Rate the current chain's converter expects from the IO proc.
+    private var deliveredSampleRate: Double = 0
     private var outputDeviceListener: AudioObjectPropertyListenerBlock?
+    private var aggregateRateListener: AudioObjectPropertyListenerBlock?
+    private var aggregateRateListenerDevice = AudioObjectID(kAudioObjectUnknown)
     private var ioProcId: AudioDeviceIOProcID?
     private var assembler: CaptureFrameAssembler
     private var converter: PersistentAudioConverter?
     private var recorder: RawAudioRecorder?
+    /// Input format the raw recording was opened with; a rebuild that changes
+    /// the delivered format must end the recording rather than feed it.
+    private var recorderFormat: AVAudioFormat?
+    /// A format-change close is final: recreating the recorder would reopen
+    /// the same path and overwrite the audio already written.
+    private var rawRecordingEnded = false
     private var watchdog: Task<Void, Never>?
 
     init(
@@ -106,59 +116,138 @@ import os
         )
       )
       let initialStatistics = assembler.statistics()
-      let initialCallbacks = initialStatistics.callbackCount
       let initialNonZero = initialStatistics.nonZeroFrameCount
       watchdog = Task { [weak self] in
-        try? await Task.sleep(nanoseconds: 2_000_000_000)
-        guard let self, self.running.withLock({ $0 }) else { return }
-        let currentStatistics = self.assembler.statistics()
-        if currentStatistics.nonZeroFrameCount > initialNonZero {
-          self.events.emit(
-            self.healthEvent(
+        await self?.superviseCapture(initialNonZeroFrameCount: initialNonZero)
+      }
+    }
+
+    private static let supervisionWindowNanos: UInt64 = 2_000_000_000
+
+    /// Supervises a freshly started chain: confirms audio within one window,
+    /// rebuilds a silent tap once against a freshly resolved target set
+    /// (Electron/Chromium helpers may become tappable after start; see
+    /// [tapDescription]), and then separates the silent outcomes that used to
+    /// collapse into one failure:
+    ///
+    /// - Zero render cycles: `kAudioAggregateDeviceTapAutoStartKey` arms the
+    ///   aggregate, and the HAL defers its start until a tapped process
+    ///   receives its first audio. A tap on an app that is not playing yet
+    ///   sits here indefinitely and begins delivering the moment sound
+    ///   arrives — a waiting state, not a failure. The session stays alive
+    ///   and reports `SystemCaptureAwaitingAppAudio` health so hosts can
+    ///   re-resolve their process selection.
+    /// - Render cycles advancing while nothing survives conversion into the
+    ///   assembler for two consecutive windows: the pipeline is genuinely
+    ///   broken and fails as `SystemCaptureDead`.
+    /// - Converted buffers arriving all-zero: alive-but-silent health, the
+    ///   documented shape of a TCC-denied tap.
+    private func superviseCapture(initialNonZeroFrameCount: Int64) async {
+      try? await Task.sleep(nanoseconds: Self.supervisionWindowNanos)
+      guard !Task.isCancelled, running.withLock({ $0 }) else { return }
+      let checkStatistics = assembler.statistics()
+      if checkStatistics.nonZeroFrameCount > initialNonZeroFrameCount {
+        events.emit(
+          healthEvent(
+            phase: .running,
+            receivingAudio: true,
+            statistics: checkStatistics
+          )
+        )
+        return
+      }
+      events.emit(
+        healthEvent(
+          phase: .interrupted,
+          message: "System capture is silent; rebuilding its process tap once.",
+          receivingAudio: false,
+          statistics: checkStatistics
+        )
+      )
+      // Assembler counters are monotonic across a rebuild
+      // (`markSourceRestart` only flags a discontinuity), so the pre-rebuild
+      // snapshot is the baseline — callbacks landing while the new chain
+      // starts count as progress instead of inflating a post-start baseline.
+      let baseline = checkStatistics
+      guard rebuild() else { return }
+      // `renderCycles` is a session-lifetime counter, so the armed test must
+      // compare against a rebuild-time baseline, not zero. Snapshotting after
+      // rebuild() returns is safe on the old-chain side (teardown drains
+      // `ioQueue`, so its increments have all landed) and at worst counts a
+      // few of the new chain's earliest cycles — which only delays the armed
+      // report by one window, because converted callbacks are checked first.
+      let renderCyclesBaseline = renderCycles.withLock { $0 }
+      var armedReported = false
+      var lastRenderCycles = renderCyclesBaseline
+      var ranWithoutConvertedAudio = false
+      while !Task.isCancelled, running.withLock({ $0 }) {
+        try? await Task.sleep(nanoseconds: Self.supervisionWindowNanos)
+        guard !Task.isCancelled, running.withLock({ $0 }) else { return }
+        let statistics = assembler.statistics()
+        let cycles = renderCycles.withLock { $0 }
+        if statistics.callbackCount > baseline.callbackCount {
+          let receiving =
+            statistics.nonZeroFrameCount > baseline.nonZeroFrameCount
+          events.emit(
+            healthEvent(
               phase: .running,
-              receivingAudio: true,
-              statistics: currentStatistics
+              message: receiving
+                ? nil : "System tap is alive but currently silent.",
+              receivingAudio: receiving,
+              statistics: statistics
             )
           )
           return
         }
-
-        // Electron/Chromium helper processes may become tappable after start.
-        // Rebuild once using a fresh PID translation before declaring failure.
-        self.events.emit(
-          self.healthEvent(
-            phase: .interrupted,
-            message: "System capture is silent; rebuilding its process tap once.",
-            receivingAudio: false,
-            statistics: currentStatistics
-          )
-        )
-        guard self.rebuild() else { return }
-        let rebuiltStatistics = self.assembler.statistics()
-        let rebuiltCallbacks = rebuiltStatistics.callbackCount
-        let rebuiltNonZero = rebuiltStatistics.nonZeroFrameCount
-        try? await Task.sleep(nanoseconds: 2_000_000_000)
-        guard self.running.withLock({ $0 }) else { return }
-        let finalStatistics = self.assembler.statistics()
-        let callbacksAdvanced = finalStatistics.callbackCount > rebuiltCallbacks
-        let audioAdvanced = finalStatistics.nonZeroFrameCount > rebuiltNonZero
-        if callbacksAdvanced {
-          self.events.emit(
-            self.healthEvent(
-              phase: .running,
-              message: audioAdvanced ? nil : "System tap is alive but currently silent.",
-              receivingAudio: audioAdvanced,
-              statistics: finalStatistics
+        if cycles == renderCyclesBaseline {
+          lifecycle.lock()
+          let aggregate = aggregateId
+          lifecycle.unlock()
+          if Self.deviceIsRunning(aggregate) == true,
+            renderCycles.withLock({ $0 }) == renderCyclesBaseline
+          {
+            // Probing can race the chain coming alive, so the cycle counter
+            // is re-read after the probe. A device that reports running while
+            // the IO proc still has not fired has a broken render-callback
+            // registration, which waiting cannot repair.
+            fail(
+              code: "SystemCaptureDead",
+              message:
+                "The capture aggregate is running but its render callback "
+                + "never fired."
             )
-          )
-        } else {
-          self.fail(
+            return
+          }
+          if !armedReported {
+            armedReported = true
+            events.emit(
+              healthEvent(
+                phase: .interrupted,
+                code: "SystemCaptureAwaitingAppAudio",
+                message:
+                  "The tapped application is not playing audio; capture is "
+                  + "armed and starts with its first sound.",
+                receivingAudio: false,
+                statistics: statistics
+              )
+            )
+          }
+          continue
+        }
+        // The device ran but produced no converted audio. Require two
+        // consecutive windows with the device still advancing before failing,
+        // so buffers in flight through the converter don't count as death.
+        if ranWithoutConvertedAudio, cycles > lastRenderCycles {
+          fail(
             code: "SystemCaptureDead",
             message:
-              "System audio delivered no callbacks after a one-shot rebuild "
-              + "(initial callbacks: \(initialCallbacks))."
+              "The system tap ran \(cycles) render cycles but no audio "
+              + "survived conversion into the capture pipeline."
           )
+          return
         }
+        ranWithoutConvertedAudio = true
+        lastRenderCycles = cycles
       }
     }
 
@@ -219,31 +308,10 @@ import os
     }
 
     private func startChainLocked() throws {
-      let description: CATapDescription
-      if request.processIds.isEmpty {
-        let ownProcess = Self.translatePid(getpid())
-        let excluded =
-          ownProcess == AudioObjectID(kAudioObjectUnknown) ? [] : [ownProcess]
-        description = CATapDescription(
-          stereoGlobalTapButExcludeProcesses: excluded
-        )
-      } else {
-        let objects = request.processIds.compactMap { value -> AudioObjectID? in
-          guard let pid = pid_t(exactly: value) else { return nil }
-          let object = Self.translatePid(pid)
-          return object == AudioObjectID(kAudioObjectUnknown) ? nil : object
-        }
-        guard !objects.isEmpty else {
-          throw PigeonError(
-            code: "NoTappableProcess",
-            message:
-              "None of the selected processes currently owns a Core Audio "
-              + "process object.",
-            details: nil
-          )
-        }
-        description = CATapDescription(stereoMixdownOfProcesses: objects)
-      }
+      let description = try Self.tapDescription(
+        bundleIds: request.bundleIds ?? [],
+        processIds: request.processIds
+      )
       description.name = "audio_flutter system capture"
       description.isPrivate = true
       description.muteBehavior = .unmuted
@@ -268,7 +336,7 @@ import os
       // clock device gives the HAL real hardware to clock from. The output
       // device is a clock source only; the tap still carries the whole-system
       // mix regardless of output routing.
-      let clockDeviceUid = Self.defaultOutputDeviceUid()
+      var clockDeviceUid = Self.defaultOutputDeviceUid()
       let uid = Self.aggregateUidPrefix + UUID().uuidString
       var aggregate = AudioObjectID(kAudioObjectUnknown)
       status = AudioHardwareCreateAggregateDevice(
@@ -281,7 +349,10 @@ import os
       )
       if status != noErr, clockDeviceUid != nil {
         // A composition the HAL rejects must not cost the session its capture:
-        // retry as the unclocked tap-only aggregate.
+        // retry as the unclocked tap-only aggregate. The session must then
+        // remember it is unclocked — output-device changes are irrelevant to
+        // it, and diagnostics must not claim a clock it does not have.
+        clockDeviceUid = nil
         status = AudioHardwareCreateAggregateDevice(
           Self.aggregateDescription(
             aggregateUid: uid,
@@ -306,7 +377,7 @@ import os
       // destroys a device this process is still building on.
       Self.liveAggregateUids.withLock { _ = $0.insert(uid) }
 
-      guard let inputFormat = Self.tapFormat(tapId) else {
+      guard let tapDescribedFormat = Self.tapFormat(tapId) else {
         unwindLocked()
         throw PigeonError(
           code: "TapFormatUnavailable",
@@ -314,6 +385,17 @@ import os
           details: nil
         )
       }
+      // The aggregate delivers at its CLOCK device's rate — the HAL resamples
+      // the tap's stream into that clock domain (AirPods in HFP/SCO clock it
+      // at 24 kHz) — while kAudioTapPropertyFormat keeps reporting the tap
+      // object's own 48 kHz. Labeling IO buffers with the tap format would
+      // write half-speed content into a full-rate container: the 2x
+      // "chipmunk" recording. The aggregate's nominal rate is the truth.
+      let inputFormat = Self.formatAtDeviceRate(
+        tapDescribedFormat,
+        device: aggregate
+      )
+      deliveredSampleRate = inputFormat.sampleRate
       guard
         let converter = PersistentAudioConverter(
           inputFormat: inputFormat,
@@ -329,8 +411,31 @@ import os
         )
       }
       self.converter = converter
-      if recorder == nil, let path = request.rawRecordingPath {
+      if let openFormat = recorderFormat, recorder != nil,
+        openFormat != inputFormat
+      {
+        // A source-native WAV carries one format; buffers from a rebuilt
+        // chain at a new rate would corrupt it. End the recording and let
+        // the capture continue — the durable converted track is unaffected.
+        recorder?.close()
+        recorder = nil
+        recorderFormat = nil
+        rawRecordingEnded = true
+        events.emit(
+          healthEvent(
+            phase: .interrupted,
+            code: "SystemRecordingFormatChanged",
+            message:
+              "The source-native recording ended because the capture chain "
+              + "was rebuilt at a different format.",
+            receivingAudio: false,
+            statistics: assembler.statistics()
+          )
+        )
+      }
+      if recorder == nil, !rawRecordingEnded, let path = request.rawRecordingPath {
         recorder = try RawAudioRecorder(path: path, inputFormat: inputFormat)
+        recorderFormat = inputFormat
       }
 
       var proc: AudioDeviceIOProcID?
@@ -374,6 +479,7 @@ import os
         )
       }
       ioProcId = proc
+      installAggregateRateListenerLocked(on: aggregateId)
       status = AudioDeviceStart(aggregateId, proc)
       guard status == noErr else {
         unwindLocked()
@@ -433,13 +539,16 @@ import os
       }
       guard shouldSchedule else { return }
       workRing.finish(discardBuffered: true)
+      // The failure event is the one a host will debug from, so it carries
+      // the full statistics snapshot — renderCycles distinguishes a device
+      // that never ran from one whose buffers died downstream.
       events.emit(
-        AudioSessionEventMessage(
-          sessionId: sessionId,
+        healthEvent(
           phase: .failed,
           code: code,
           message: message,
-          receivingAudio: false
+          receivingAudio: false,
+          statistics: assembler.statistics()
         )
       )
       // The IO callback runs on `ioQueue`, while teardown drains that same
@@ -466,6 +575,7 @@ import os
     }
 
     private func unwindLocked() {
+      removeAggregateRateListenerLocked()
       if let proc = ioProcId {
         AudioDeviceDestroyIOProcID(aggregateId, proc)
         ioProcId = nil
@@ -527,6 +637,85 @@ import os
         block
       )
       outputDeviceListener = nil
+    }
+
+    /// Watches the live aggregate's nominal sample rate.
+    ///
+    /// A Bluetooth output flipping between A2DP (48 kHz) and HFP/SCO
+    /// (16–24 kHz) keeps its UID — the default-output listener never fires —
+    /// yet it re-clocks the aggregate, silently changing the rate the IO proc
+    /// delivers at. The chain's converter is built for one input rate, so the
+    /// only correct response is a rebuild against the new rate.
+    private func installAggregateRateListenerLocked(on device: AudioObjectID) {
+      removeAggregateRateListenerLocked()
+      var address = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyNominalSampleRate,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+      )
+      let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+        self?.handleAggregateRateChange()
+      }
+      let status = AudioObjectAddPropertyListenerBlock(
+        device,
+        &address,
+        deviceListenerQueue,
+        block
+      )
+      guard status == noErr else { return }
+      aggregateRateListener = block
+      aggregateRateListenerDevice = device
+    }
+
+    private func removeAggregateRateListenerLocked() {
+      guard let block = aggregateRateListener else { return }
+      var address = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyNominalSampleRate,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+      )
+      AudioObjectRemovePropertyListenerBlock(
+        aggregateRateListenerDevice,
+        &address,
+        deviceListenerQueue,
+        block
+      )
+      aggregateRateListener = nil
+      aggregateRateListenerDevice = AudioObjectID(kAudioObjectUnknown)
+    }
+
+    /// Runs on `deviceListenerQueue` and returns immediately, mirroring
+    /// [handleDefaultOutputDeviceChange]'s deadlock discipline.
+    private func handleAggregateRateChange() {
+      guard running.withLock({ $0 }) else { return }
+      DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        self?.rebuildForAggregateRateChange()
+      }
+    }
+
+    private func rebuildForAggregateRateChange() {
+      guard running.withLock({ $0 }) else { return }
+      lifecycle.lock()
+      let aggregate = aggregateId
+      let expected = deliveredSampleRate
+      lifecycle.unlock()
+      guard
+        let rate = Self.deviceNominalSampleRate(aggregate),
+        rate > 0,
+        rate != expected
+      else { return }
+      events.emit(
+        healthEvent(
+          phase: .interrupted,
+          code: "CaptureSampleRateChanged",
+          message:
+            "The capture device renegotiated its sample rate; rebuilding the "
+            + "capture chain at the new rate.",
+          receivingAudio: false,
+          statistics: assembler.statistics()
+        )
+      )
+      _ = rebuild()
     }
 
     /// Runs on `deviceListenerQueue` and returns immediately: teardown removes
@@ -668,6 +857,80 @@ import os
       )
     }
 
+    /// The tap description for this capture's current target set.
+    ///
+    /// Built from scratch on every chain start, including a rebuild, so a
+    /// selection expressed as bundle IDs is resolved against the process list
+    /// as it is now and never against the objects that existed when the
+    /// session was prepared — the stale-PID rebuild this used to perform.
+    ///
+    /// The authorized target set is resolved the same way on every macOS: the
+    /// process objects that own the requested bundle IDs right now, unioned
+    /// with the process IDs the host authorized. macOS 26 additionally names
+    /// the bundle IDs on the description, where `processRestoreEnabled` keeps
+    /// the tap pointed at those applications as they exit and relaunch — the
+    /// identity list is additive to the process list, never a replacement for
+    /// it, so a host's authorized processes are tapped on both OS generations.
+    ///
+    /// Only on macOS 26 with bundle IDs present may that union be empty: the
+    /// tap is armed for the app's next launch rather than broken, which is a
+    /// waiting state — `kAudioAggregateDeviceTapAutoStartKey` arms the
+    /// aggregate and [superviseCapture] reports `SystemCaptureAwaitingAppAudio`
+    /// until the app's first sound. Everywhere else an empty union means there
+    /// is nothing to tap.
+    static func tapDescription(
+      bundleIds: [String],
+      processIds: [Int64]
+    ) throws -> CATapDescription {
+      let targetBundleIds = bundleIds.filter { !$0.isEmpty }
+      if targetBundleIds.isEmpty, processIds.isEmpty {
+        let ownProcess = translatePid(getpid())
+        let excluded =
+          ownProcess == AudioObjectID(kAudioObjectUnknown) ? [] : [ownProcess]
+        return CATapDescription(stereoGlobalTapButExcludeProcesses: excluded)
+      }
+      var objects: [AudioObjectID] = []
+      var seen = Set<AudioObjectID>()
+      for object in processObjects(matchingBundleIds: targetBundleIds)
+        + processIds.compactMap({ value -> AudioObjectID? in
+          guard let pid = pid_t(exactly: value) else { return nil }
+          let object = translatePid(pid)
+          return object == AudioObjectID(kAudioObjectUnknown) ? nil : object
+        })
+      {
+        if seen.insert(object).inserted {
+          objects.append(object)
+        }
+      }
+      if !targetBundleIds.isEmpty, #available(macOS 26.0, *) {
+        // A plain `CATapDescription()` leaves `mixdown` false, which taps the
+        // device's channels rather than mixing the tapped processes down. The
+        // three flags below are what `initStereoMixdownOfProcesses` sets, so
+        // the stream shape matches the process path exactly; the bundle IDs
+        // only add the identities the tap follows across app restarts.
+        let description = CATapDescription()
+        description.processes = objects
+        description.bundleIDs = targetBundleIds
+        description.isProcessRestoreEnabled = true
+        description.isMixdown = true
+        description.isMono = false
+        description.isExclusive = false
+        return description
+      }
+      guard !objects.isEmpty else {
+        throw PigeonError(
+          code: "NoTappableProcess",
+          message: targetBundleIds.isEmpty
+            ? "None of the selected processes currently owns a Core Audio "
+              + "process object."
+            : "Neither the selected bundle IDs nor the selected processes "
+              + "currently own a Core Audio process object.",
+          details: nil
+        )
+      }
+      return CATapDescription(stereoMixdownOfProcesses: objects)
+    }
+
     static func translatePid(_ pid: pid_t) -> AudioObjectID {
       var address = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyTranslatePIDToProcessObject,
@@ -686,6 +949,45 @@ import os
         &object
       )
       return status == noErr ? object : AudioObjectID(kAudioObjectUnknown)
+    }
+
+    /// The described stream layout re-rated to the device's nominal sample
+    /// rate, which is what the device's IO proc actually delivers. Falls back
+    /// to the described format when the rate cannot be read.
+    static func formatAtDeviceRate(
+      _ described: AVAudioFormat,
+      device: AudioObjectID
+    ) -> AVAudioFormat {
+      guard
+        let rate = deviceNominalSampleRate(device),
+        rate > 0,
+        rate != described.sampleRate
+      else { return described }
+      var description = described.streamDescription.pointee
+      description.mSampleRate = rate
+      return AVAudioFormat(streamDescription: &description) ?? described
+    }
+
+    static func deviceNominalSampleRate(_ device: AudioObjectID) -> Double? {
+      guard device != AudioObjectID(kAudioObjectUnknown) else { return nil }
+      var address = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyNominalSampleRate,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+      )
+      var rate = Float64(0)
+      var size = UInt32(MemoryLayout<Float64>.size)
+      guard
+        AudioObjectGetPropertyData(
+          device,
+          &address,
+          0,
+          nil,
+          &size,
+          &rate
+        ) == noErr
+      else { return nil }
+      return rate
     }
 
     static func tapFormat(_ tap: AudioObjectID) -> AVAudioFormat? {
@@ -788,6 +1090,30 @@ import os
       return deviceUid(device)
     }
 
+    /// Whether the HAL reports the device's IO engine as running, or nil when
+    /// the property cannot be read (unknown or destroyed device).
+    static func deviceIsRunning(_ device: AudioObjectID) -> Bool? {
+      guard device != AudioObjectID(kAudioObjectUnknown) else { return nil }
+      var address = AudioObjectPropertyAddress(
+        mSelector: kAudioDevicePropertyDeviceIsRunning,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+      )
+      var isRunning: UInt32 = 0
+      var size = UInt32(MemoryLayout<UInt32>.size)
+      guard
+        AudioObjectGetPropertyData(
+          device,
+          &address,
+          0,
+          nil,
+          &size,
+          &isRunning
+        ) == noErr
+      else { return nil }
+      return isRunning != 0
+    }
+
     static func deviceUid(_ device: AudioDeviceID) -> String? {
       var address = AudioObjectPropertyAddress(
         mSelector: kAudioDevicePropertyDeviceUID,
@@ -867,7 +1193,20 @@ import os
       return destroyed
     }
 
-    static func listProcesses() -> [AudioProcessMessage] {
+    /// One process the audio server knows about.
+    struct AudioProcessObject {
+      let object: AudioObjectID
+      let pid: pid_t
+      let bundleId: String
+      let isRunningOutput: Bool
+    }
+
+    /// Every Core Audio process object, with the facts a selection is made on.
+    ///
+    /// Both the host-visible process list and bundle-ID tap targeting read
+    /// this one enumeration, so what a host was shown and what the tap
+    /// resolves cannot disagree about which processes own a bundle ID.
+    static func processObjects() -> [AudioProcessObject] {
       var address = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyProcessObjectList,
         mScope: kAudioObjectPropertyScopeGlobal,
@@ -953,10 +1292,43 @@ import os
           &runningSize,
           &isRunning
         )
-        return AudioProcessMessage(
-          processId: Int64(pid),
+        return AudioProcessObject(
+          object: object,
+          pid: pid,
           bundleId: bundle,
-          isProducingAudio: isRunning != 0
+          isRunningOutput: isRunning != 0
+        )
+      }
+    }
+
+    /// The process objects that belong to [bundleIds] right now.
+    ///
+    /// A bundle ID owns its own process and its helper namespace (`id.*`),
+    /// matched case-insensitively — never a different app whose bundle ID
+    /// merely starts with the same characters. This mirrors the Dart
+    /// selector's namespace rule, and matching the namespace natively also
+    /// catches helpers that spawned after the host expanded its selection.
+    static func processObjects(matchingBundleIds bundleIds: [String])
+      -> [AudioObjectID]
+    {
+      guard !bundleIds.isEmpty else { return [] }
+      let targets = bundleIds.map { $0.lowercased() }
+      return processObjects().compactMap { process in
+        let candidate = process.bundleId.lowercased()
+        guard !candidate.isEmpty else { return nil }
+        let matches = targets.contains { target in
+          candidate == target || candidate.hasPrefix(target + ".")
+        }
+        return matches ? process.object : nil
+      }
+    }
+
+    static func listProcesses() -> [AudioProcessMessage] {
+      processObjects().map { process in
+        AudioProcessMessage(
+          processId: Int64(process.pid),
+          bundleId: process.bundleId,
+          isProducingAudio: process.isRunningOutput
         )
       }
     }
@@ -969,8 +1341,10 @@ import os
     /// format, and is simply fed silence. Tap creation therefore proves the API
     /// is reachable, not that audio will arrive. The authoritative signal is
     /// capture health — a running session whose non-zero frame count never
-    /// advances, reported by `start()`'s watchdog as `receivingAudio: false`
-    /// and then as `SystemCaptureDead`.
+    /// advances, reported by the supervision task as `receivingAudio: false`
+    /// ("alive but currently silent" when callbacks flow, or
+    /// `SystemCaptureAwaitingAppAudio` while the armed aggregate waits for
+    /// the tapped app's first sound).
     ///
     /// Gating this on observed non-silent frames needs validation against an
     /// actually-denied grant on current macOS before the behaviour changes;

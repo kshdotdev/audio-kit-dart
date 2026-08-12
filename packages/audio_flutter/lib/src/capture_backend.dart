@@ -5,6 +5,8 @@ import 'package:audio_flutter_platform_interface/audio_flutter_platform_interfac
     as federated;
 
 import 'capture.dart';
+import 'process_selector.dart';
+import 'system_audio.dart';
 
 /// Normalized [CaptureBackend] implemented by the active federated plugin.
 ///
@@ -223,6 +225,7 @@ final class FlutterCaptureBackend implements CaptureBackend {
       requestFingerprint: _requestFingerprint(request),
       sourceId: source.sourceId,
       processIds: List<int>.unmodifiable(effectiveProcessIds),
+      bundleIds: _probeBundleIds(sources, source, effectiveProcessIds),
       createdAt: _probeClock.elapsed,
     );
     return CaptureProbeResult(
@@ -304,6 +307,7 @@ final class FlutterCaptureBackend implements CaptureBackend {
             AudioCaptureOverflowPolicy.failCapture,
         },
         processIds: authorization.processIds,
+        bundleIds: authorization.bundleIds,
         inputDeviceId: source.inputDeviceId,
         logicalSourceId: source.sourceId,
         timingQuality: _timingQuality(source.timingQuality),
@@ -381,13 +385,61 @@ final class _AuthorizedProbe {
     required this.requestFingerprint,
     required this.sourceId,
     required this.processIds,
+    required this.bundleIds,
     required this.createdAt,
   });
 
   final String requestFingerprint;
   final String sourceId;
   final List<int> processIds;
+  final List<String> bundleIds;
   final Duration createdAt;
+}
+
+/// The application identity behind a probed source, when it has one.
+///
+/// Carried alongside the authorized process set rather than replacing it: the
+/// process IDs are what a platform without identity-based capture uses, while
+/// a platform that can tap an application (macOS 26 and newer) keeps following
+/// it through helper respawns and app restarts. Sources that cannot filter by
+/// application, such as a whole-system mix, contribute nothing here.
+List<String> _sourceBundleIds(federated.PlatformCaptureSourceInfo source) {
+  final String? applicationId = source.applicationId;
+  if (applicationId == null ||
+      !source.capabilities.contains(
+        federated.PlatformCaptureCapability.applicationFiltering,
+      )) {
+    return const <String>[];
+  }
+  return List<String>.unmodifiable(<String>[applicationId]);
+}
+
+/// Application identities behind the whole authorized process set.
+///
+/// The authorized PIDs can span several enumerated sources — a helper family
+/// the host grouped into one selection — so every source whose processes are
+/// part of the authorization contributes its identity, not just the
+/// representative. The selector then widens the set with the family and
+/// external-media namespaces those applications render audio through, so an
+/// identity-based tap follows the same processes the PID set names.
+List<String> _probeBundleIds(
+  List<federated.PlatformCaptureSourceInfo> sources,
+  federated.PlatformCaptureSourceInfo representative,
+  List<int> effectiveProcessIds,
+) {
+  final Set<String> collected = <String>{
+    ..._sourceBundleIds(representative),
+    for (final federated.PlatformCaptureSourceInfo source in sources)
+      if (source.processIds.any(effectiveProcessIds.contains))
+        ..._sourceBundleIds(source),
+  };
+  if (collected.isEmpty) {
+    return const <String>[];
+  }
+  return const SystemAudioProcessSelector().expandBundleIds(
+    processes: const <AudioCaptureProcess>[],
+    bundleIds: collected,
+  );
 }
 
 String _requestFingerprint(CaptureProbeRequest request) =>

@@ -42,6 +42,7 @@ void main() {
         kind: PlatformCaptureKind.systemAudio,
         outputFormat: PlatformPcmFormat(sampleRate: 16000, channelCount: 1),
         processIds: <int>[42],
+        bundleIds: <String>['com.example.meeting'],
       ),
     );
 
@@ -67,6 +68,10 @@ void main() {
     );
     expect(process.processIds, <int>[42]);
     expect(process.applicationId, 'com.example.meeting');
+    // Both selections reach the native request: the process objects a tap
+    // resolves today, and the identities it keeps following afterwards.
+    expect(host.lastCaptureRequest?.processIds, <int>[42]);
+    expect(host.lastCaptureRequest?.bundleIds, <String>['com.example.meeting']);
     expect(process.timingQuality, PlatformCaptureTimingQuality.nativeMapped);
     expect(session.timingQuality, PlatformCaptureTimingQuality.nativeMapped);
     expect(
@@ -139,17 +144,21 @@ final class _FakeDarwinHost extends pigeon.DarwinAudioHostApi {
   final List<pigeon.AudioInputDeviceMessage> inputs;
   final List<pigeon.AudioProcessMessage> processes;
   var listProcessesCalls = 0;
+  pigeon.CaptureRequestMessage? lastCaptureRequest;
 
   @override
   Future<pigeon.CaptureSessionInfoMessage> prepareCapture(
     pigeon.CaptureRequestMessage request,
-  ) async => pigeon.CaptureSessionInfoMessage(
-    sessionId: 1,
-    sourceId: 'darwin-source',
-    trackId: 'them',
-    clockId: 'darwin.host-time',
-    format: request.outputFormat,
-  );
+  ) async {
+    lastCaptureRequest = request;
+    return pigeon.CaptureSessionInfoMessage(
+      sessionId: 1,
+      sourceId: 'darwin-source',
+      trackId: 'them',
+      clockId: 'darwin.host-time',
+      format: request.outputFormat,
+    );
+  }
 
   @override
   Future<bool> isSystemAudioCaptureSupported() async => systemCaptureSupported;
