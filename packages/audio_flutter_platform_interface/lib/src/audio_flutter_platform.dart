@@ -52,11 +52,14 @@ abstract class AudioFlutterPlatform extends PlatformInterface {
   /// Advisory. On macOS the grant is enforced when audio is delivered rather
   /// than when the capture is created, so an ungranted process can still build
   /// a valid-looking capture that is fed silence — this may report `true`
-  /// optimistically. The authoritative signal is capture health: a session that
-  /// reaches a running phase with `receivingAudio` false is silent, and one
-  /// that stays silent fails with `SystemCaptureDead`. Treat `false` as
-  /// conclusive, treat `true` as a hint, and keep observing session events
-  /// after the capture starts.
+  /// optimistically. The authoritative signal is capture health: a session
+  /// that reaches a running phase with `receivingAudio` false is silent. On
+  /// macOS a process-scoped tap whose target has not played audio yet stays
+  /// armed and reports `SystemCaptureAwaitingAppAudio` until the app's first
+  /// sound; `SystemCaptureDead` is reserved for a chain whose device ran but
+  /// delivered nothing through conversion. Treat `false` as conclusive, treat
+  /// `true` as a hint, and keep observing session events after the capture
+  /// starts.
   Future<bool> requestSystemAudioCapturePermission();
 
   /// Reports the microphone authorization without prompting.

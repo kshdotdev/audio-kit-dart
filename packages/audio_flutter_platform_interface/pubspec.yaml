@@ -1,6 +1,6 @@
 name: audio_flutter_platform_interface
 description: Typed platform contract for audio_flutter capture and playback.
-version: 0.2.0
+version: 0.2.1
 resolution: workspace
 homepage: https://github.com/kshdotdev/audio-kit-dart
 repository: https://github.com/kshdotdev/audio-kit-dart

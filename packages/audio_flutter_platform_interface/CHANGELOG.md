@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- Add optional `PlatformCaptureRequest.bundleIds`: application bundle IDs a
+  capture targets by durable identity, surviving helper respawns and app
+  relaunches. Defaults to empty; platforms with no application identity
+  ignore it. Additive — existing implementations are unaffected.
+
 ## 0.2.0
 
 - Add `microphonePermissionStatus()` and `requestMicrophonePermission()` to

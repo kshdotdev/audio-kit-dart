@@ -270,6 +270,13 @@ struct CaptureRequestMessage: Hashable, CustomStringConvertible {
   var maxBufferedDurationMicros: Int64
   var overflowPolicy: CaptureOverflowPolicyMessage
   var processIds: [Int64]
+  /// Application bundle IDs to tap, independent of which processes currently
+  /// carry them.
+  ///
+  /// macOS 26 taps these identities directly and restores them across app
+  /// exit and relaunch; older versions resolve them to process objects when
+  /// the chain is built, which is re-done on every rebuild.
+  var bundleIds: [String]? = nil
   var inputDeviceId: String? = nil
   var rawRecordingPath: String? = nil
 
@@ -282,8 +289,9 @@ struct CaptureRequestMessage: Hashable, CustomStringConvertible {
     let maxBufferedDurationMicros = pigeonVar_list[3] as! Int64
     let overflowPolicy = pigeonVar_list[4] as! CaptureOverflowPolicyMessage
     let processIds = pigeonVar_list[5] as! [Int64]
-    let inputDeviceId: String? = nilOrValue(pigeonVar_list[6])
-    let rawRecordingPath: String? = nilOrValue(pigeonVar_list[7])
+    let bundleIds: [String]? = nilOrValue(pigeonVar_list[6])
+    let inputDeviceId: String? = nilOrValue(pigeonVar_list[7])
+    let rawRecordingPath: String? = nilOrValue(pigeonVar_list[8])
 
     return CaptureRequestMessage(
       kind: kind,
@@ -292,6 +300,7 @@ struct CaptureRequestMessage: Hashable, CustomStringConvertible {
       maxBufferedDurationMicros: maxBufferedDurationMicros,
       overflowPolicy: overflowPolicy,
       processIds: processIds,
+      bundleIds: bundleIds,
       inputDeviceId: inputDeviceId,
       rawRecordingPath: rawRecordingPath
     )
@@ -304,6 +313,7 @@ struct CaptureRequestMessage: Hashable, CustomStringConvertible {
       maxBufferedDurationMicros,
       overflowPolicy,
       processIds,
+      bundleIds,
       inputDeviceId,
       rawRecordingPath,
     ]
@@ -312,7 +322,7 @@ struct CaptureRequestMessage: Hashable, CustomStringConvertible {
     if Swift.type(of: lhs) != Swift.type(of: rhs) {
       return false
     }
-    return MessagesPigeonInternal.deepEquals(lhs.kind, rhs.kind) && MessagesPigeonInternal.deepEquals(lhs.outputFormat, rhs.outputFormat) && MessagesPigeonInternal.deepEquals(lhs.frameDurationMicros, rhs.frameDurationMicros) && MessagesPigeonInternal.deepEquals(lhs.maxBufferedDurationMicros, rhs.maxBufferedDurationMicros) && MessagesPigeonInternal.deepEquals(lhs.overflowPolicy, rhs.overflowPolicy) && MessagesPigeonInternal.deepEquals(lhs.processIds, rhs.processIds) && MessagesPigeonInternal.deepEquals(lhs.inputDeviceId, rhs.inputDeviceId) && MessagesPigeonInternal.deepEquals(lhs.rawRecordingPath, rhs.rawRecordingPath)
+    return MessagesPigeonInternal.deepEquals(lhs.kind, rhs.kind) && MessagesPigeonInternal.deepEquals(lhs.outputFormat, rhs.outputFormat) && MessagesPigeonInternal.deepEquals(lhs.frameDurationMicros, rhs.frameDurationMicros) && MessagesPigeonInternal.deepEquals(lhs.maxBufferedDurationMicros, rhs.maxBufferedDurationMicros) && MessagesPigeonInternal.deepEquals(lhs.overflowPolicy, rhs.overflowPolicy) && MessagesPigeonInternal.deepEquals(lhs.processIds, rhs.processIds) && MessagesPigeonInternal.deepEquals(lhs.bundleIds, rhs.bundleIds) && MessagesPigeonInternal.deepEquals(lhs.inputDeviceId, rhs.inputDeviceId) && MessagesPigeonInternal.deepEquals(lhs.rawRecordingPath, rhs.rawRecordingPath)
   }
 
   func hash(into hasher: inout Hasher) {
@@ -323,12 +333,13 @@ struct CaptureRequestMessage: Hashable, CustomStringConvertible {
     MessagesPigeonInternal.deepHash(value: maxBufferedDurationMicros, hasher: &hasher)
     MessagesPigeonInternal.deepHash(value: overflowPolicy, hasher: &hasher)
     MessagesPigeonInternal.deepHash(value: processIds, hasher: &hasher)
+    MessagesPigeonInternal.deepHash(value: bundleIds, hasher: &hasher)
     MessagesPigeonInternal.deepHash(value: inputDeviceId, hasher: &hasher)
     MessagesPigeonInternal.deepHash(value: rawRecordingPath, hasher: &hasher)
   }
 
   public var description: String {
-    return "CaptureRequestMessage(kind: \(String(describing: kind)), outputFormat: \(String(describing: outputFormat)), frameDurationMicros: \(String(describing: frameDurationMicros)), maxBufferedDurationMicros: \(String(describing: maxBufferedDurationMicros)), overflowPolicy: \(String(describing: overflowPolicy)), processIds: \(String(describing: processIds)), inputDeviceId: \(String(describing: inputDeviceId)), rawRecordingPath: \(String(describing: rawRecordingPath)))"
+    return "CaptureRequestMessage(kind: \(String(describing: kind)), outputFormat: \(String(describing: outputFormat)), frameDurationMicros: \(String(describing: frameDurationMicros)), maxBufferedDurationMicros: \(String(describing: maxBufferedDurationMicros)), overflowPolicy: \(String(describing: overflowPolicy)), processIds: \(String(describing: processIds)), bundleIds: \(String(describing: bundleIds)), inputDeviceId: \(String(describing: inputDeviceId)), rawRecordingPath: \(String(describing: rawRecordingPath)))"
   }
 }
 
